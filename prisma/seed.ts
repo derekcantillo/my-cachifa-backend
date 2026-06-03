@@ -1,5 +1,9 @@
 import { Category, GoalStatus, PlanPhase, PrismaClient } from '@prisma/client';
 
+if (process.env['DATABASE_URL_LOCAL']) {
+  process.env['DATABASE_URL'] = process.env['DATABASE_URL_LOCAL'];
+}
+
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {

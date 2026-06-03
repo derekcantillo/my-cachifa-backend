@@ -14,8 +14,17 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({ logger: false }),
   );
 
+  await app.register(
+    require('fastify-raw-body') as Parameters<typeof app.register>[0],
+    {
+      global: true,
+      encoding: 'utf8',
+      runFirst: true,
+    },
+  );
+
   app.enableCors();
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', { exclude: ['webhook', 'webhook/(.*)'] });
   app.useGlobalPipes(new AppValidationPipe());
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new LoggingInterceptor());
