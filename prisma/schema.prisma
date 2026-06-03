@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────
+
+enum Category {
+  FOOD
+  TRANSPORT
+  ENTERTAINMENT
+  SERVICES
+  DEBT
+  SAVING
+  VEHICLE
+  HEALTH
+  OTHER
+}
+
+enum TransactionType {
+  EXPENSE
+  INCOME
+  SAVING
+  DEBT_PAYMENT
+}
+
+enum PlanPhase {
+  PHASE_1_DEBT_CONTROL
+  PHASE_2_OPTIMIZATION
+  PHASE_3_VEHICLE_PURCHASE
+  PHASE_4_CONSOLIDATION
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+enum AlertType {
+  BUDGET_70
+  BUDGET_90
+  BUDGET_100
+  LARGE_EXPENSE
+  SAVING_REMINDER
+  WEEKLY_SUMMARY
+  MONTHLY_REPORT
+  GOAL_PROGRESS
+}
+
+// ─── Models ───────────────────────────────────────────────────
+
+model User {
+  id           String        @id @default(cuid())
+  waNumber     String        @unique @map("wa_number")
+  name         String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  transactions Transaction[]
+  budgets      Budget[]
+  goals        Goal[]
+  alerts       Alert[]
+
+  @@map("users")
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  userId          String          @map("user_id")
+  amount          Decimal         @db.Decimal(12, 2)
+  type            TransactionType
+  category        Category
+  description     String?
+  rawMessage      String          @map("raw_message")
+  transactionDate DateTime        @default(now()) @map("transaction_date")
+  monthYear       String          @map("month_year")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, monthYear])
+  @@map("transactions")
+}
+
+model Budget {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  monthYear   String   @map("month_year")
+  category    Category
+  limitAmount Decimal  @db.Decimal(12, 2) @map("limit_amount")
+  spentAmount Decimal  @db.Decimal(12, 2) @default(0) @map("spent_amount")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, monthYear, category])
+  @@index([userId, monthYear])
+  @@map("budgets")
+}
+
+model Goal {
+  id            String     @id @default(cuid())
+  userId        String     @map("user_id")
+  name          String
+  targetAmount  Decimal    @db.Decimal(12, 2) @map("target_amount")
+  currentAmount Decimal    @db.Decimal(12, 2) @default(0) @map("current_amount")
+  targetDate    DateTime   @map("target_date")
+  phase         PlanPhase
+  status        GoalStatus
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("goals")
+}
+
+model Alert {
+  id      String    @id @default(cuid())
+  userId  String    @map("user_id")
+  type    AlertType
+  message String
+  sentAt  DateTime  @default(now()) @map("sent_at")
+  read    Boolean   @default(false)
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("alerts")
+}

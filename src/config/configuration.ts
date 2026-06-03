@@ -27,7 +27,7 @@ export default (): AppConfig => ({
     accessToken: process.env['WA_ACCESS_TOKEN'] ?? '',
     verifyToken: process.env['WA_VERIFY_TOKEN'] ?? '',
     webhookSecret: process.env['WA_WEBHOOK_SECRET'] ?? '',
-    myPhoneNumber: process.env['MY_PHONE_NUMBER_WA'] ?? '',
+    myPhoneNumber: process.env['MY_WA_NUMBER'] ?? '',
   },
   anthropic: {
     apiKey: process.env['ANTHROPIC_API_KEY'] ?? '',

@@ -1,36 +1,46 @@
-# ─── Base Stage ──────────────────────────────────────────
-FROM node:20-alpine AS base
+# ─── Base Stage ───────────────────────────────────────────────
+FROM node:22-alpine AS base
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-# ─── Development Stage ────────────────────────────────────
+# ─── Development Stage ────────────────────────────────────────
 FROM base AS development
 
 ENV NODE_ENV=development
 
-CMD ["npm", "run", "start:dev"]
+CMD ["pnpm", "run", "start:dev"]
 
-# ─── Build Stage (for production) ────────────────────────
+# ─── Build Stage ──────────────────────────────────────────────
 FROM base AS build
 
-RUN npm run build
+RUN pnpm run build
 
-# ─── Production Stage ─────────────────────────────────────
-FROM node:20-alpine AS production
+# ─── Production Stage ─────────────────────────────────────────
+FROM node:22-alpine AS production
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-RUN npm ci --only=production
+RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=build /app/dist ./dist
 
