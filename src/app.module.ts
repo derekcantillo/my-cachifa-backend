@@ -1,10 +1,19 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { AlertsModule } from '@modules/alerts/alerts.module';
+import { AnthropicModule } from '@modules/anthropic/anthropic.module';
+import { BudgetsModule } from '@modules/budgets/budgets.module';
+import { ExpensesModule } from '@modules/expenses/expenses.module';
+import { GoalsModule } from '@modules/goals/goals.module';
+import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    AlertsModule,
+    AnthropicModule,
+    BudgetsModule,
+    ExpensesModule,
+    GoalsModule,
+    WhatsAppModule,
+  ],
 })
 export class AppModule {}
