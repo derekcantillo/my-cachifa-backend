@@ -6,8 +6,10 @@ export interface WhatsAppConfig {
   myPhoneNumber: string;
 }
 
-export interface AnthropicConfig {
-  apiKey: string;
+export interface AiConfig {
+  provider: string;
+  geminiApiKey: string;
+  anthropicApiKey: string;
 }
 
 export interface AppConfig {
@@ -15,7 +17,7 @@ export interface AppConfig {
   nodeEnv: string;
   databaseUrl: string;
   whatsapp: WhatsAppConfig;
-  anthropic: AnthropicConfig;
+  ai: AiConfig;
 }
 
 export default (): AppConfig => ({
@@ -29,7 +31,9 @@ export default (): AppConfig => ({
     webhookSecret: process.env['WA_WEBHOOK_SECRET'] ?? '',
     myPhoneNumber: process.env['MY_WA_NUMBER'] ?? '',
   },
-  anthropic: {
-    apiKey: process.env['ANTHROPIC_API_KEY'] ?? '',
+  ai: {
+    provider: process.env['AI_PROVIDER'] ?? 'gemini',
+    geminiApiKey: process.env['GEMINI_API_KEY'] ?? '',
+    anthropicApiKey: process.env['ANTHROPIC_API_KEY'] ?? '',
   },
 });

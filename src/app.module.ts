@@ -4,7 +4,7 @@ import * as Joi from 'joi';
 import configuration from '@config/configuration';
 import { PrismaModule } from '@modules/prisma/prisma.module';
 import { AlertsModule } from '@modules/alerts/alerts.module';
-import { AnthropicModule } from '@modules/anthropic/anthropic.module';
+import { AiModule } from '@modules/ai/ai.module';
 import { BudgetsModule } from '@modules/budgets/budgets.module';
 import { ExpensesModule } from '@modules/expenses/expenses.module';
 import { GoalsModule } from '@modules/goals/goals.module';
@@ -25,8 +25,12 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
         WA_ACCESS_TOKEN: Joi.string().required(),
         WA_VERIFY_TOKEN: Joi.string().required(),
         WA_WEBHOOK_SECRET: Joi.string().required(),
-        ANTHROPIC_API_KEY: Joi.string().required(),
         MY_WA_NUMBER: Joi.string().required(),
+        AI_PROVIDER: Joi.string()
+          .valid('gemini', 'anthropic')
+          .default('gemini'),
+        GEMINI_API_KEY: Joi.string().optional().allow(''),
+        ANTHROPIC_API_KEY: Joi.string().optional().allow(''),
       }),
       validationOptions: {
         allowUnknown: true,
@@ -35,7 +39,7 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
     }),
     PrismaModule,
     AlertsModule,
-    AnthropicModule,
+    AiModule,
     BudgetsModule,
     ExpensesModule,
     GoalsModule,

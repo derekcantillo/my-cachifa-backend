@@ -6,12 +6,16 @@ import type {
   ISendMessagePayload,
   ISendMessageResponse,
 } from './interfaces/whatsapp-api.interface';
+import { AiService } from '@modules/ai/ai.service';
 
 @Injectable()
 export class WhatsappService {
   private readonly logger = new Logger(WhatsappService.name);
 
-  constructor(private readonly config: ConfigService<AppConfig, true>) {}
+  constructor(
+    private readonly config: ConfigService<AppConfig, true>,
+    private readonly aiService: AiService,
+  ) {}
 
   async processIncomingPayload(payload: IWebhookPayload): Promise<void> {
     const message = payload.entry[0]?.changes[0]?.value.messages?.[0];
@@ -33,7 +37,15 @@ export class WhatsappService {
 
   async handleTextMessage(from: string, text: string): Promise<void> {
     this.logger.log(`Handling text message from ${from}: ${text}`);
-    // TODO: wire to ClaudeService in Bloque 5
+
+    const result = await this.aiService.classifyMessage(text);
+    this.logger.log(`Classified message: ${JSON.stringify(result)}`);
+
+    if (result.requiresFollowUp && result.followUpQuestion) {
+      await this.sendMessage(from, result.followUpQuestion);
+    } else {
+      await this.sendMessage(from, result.confirmation);
+    }
   }
 
   async sendMessage(to: string, body: string): Promise<void> {
