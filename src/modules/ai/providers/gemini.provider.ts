@@ -27,7 +27,10 @@ export class GeminiProvider implements IAiProvider {
   async classifyMessage(rawMessage: string): Promise<IClassifiedMessage> {
     const result = await this.model.generateContent(rawMessage);
     const raw = result.response.text().trim();
-    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    const clean = raw
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
 
     try {
       return JSON.parse(clean) as IClassifiedMessage;

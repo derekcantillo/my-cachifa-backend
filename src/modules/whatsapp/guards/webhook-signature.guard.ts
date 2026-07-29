@@ -43,7 +43,9 @@ export class WebhookSignatureGuard implements CanActivate {
     const expectedBuffer = Buffer.from(expectedSignature, 'ascii');
 
     if (sigBuffer.byteLength !== expectedBuffer.byteLength) {
-      this.logger.warn('Webhook signature verification failed — length mismatch');
+      this.logger.warn(
+        'Webhook signature verification failed — length mismatch',
+      );
       throw new ForbiddenException('Invalid webhook signature');
     }
 

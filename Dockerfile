@@ -14,6 +14,8 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
+RUN pnpm prisma generate
+
 # ─── Development Stage ────────────────────────────────────────
 FROM base AS development
 

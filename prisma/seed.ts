@@ -1,4 +1,10 @@
-import { Category, GoalStatus, PlanPhase, PrismaClient } from '@prisma/client';
+import {
+  AccountType,
+  Category,
+  GoalStatus,
+  PlanPhase,
+  PrismaClient,
+} from '@prisma/client';
 
 if (process.env['DATABASE_URL_LOCAL']) {
   process.env['DATABASE_URL'] = process.env['DATABASE_URL_LOCAL'];
@@ -58,13 +64,35 @@ async function main(): Promise<void> {
 
   console.log(`✓ Budgets seeded for ${monthYear}`);
 
-  // ─── Goals ─────────────────────────────────────────────────
+  // ─── Accounts ──────────────────────────────────────────────
+  const accounts: { name: string; type: AccountType }[] = [
+    { name: 'Tarjeta débito principal', type: AccountType.DEBIT_CARD },
+    { name: 'Efectivo', type: AccountType.CASH },
+    { name: 'Cuenta de ahorros', type: AccountType.SAVINGS_ACCOUNT },
+  ];
+
+  for (const account of accounts) {
+    const existing = await prisma.account.findFirst({
+      where: { userId: user.id, name: account.name },
+    });
+
+    if (!existing) {
+      await prisma.account.create({ data: { userId: user.id, ...account } });
+    }
+  }
+
+  console.log(`✓ Accounts seeded (${accounts.length})`);
+
+  // ─── Goals + contributions ─────────────────────────────────
+  // Cada meta trae su historial de aportes; `currentAmount` se sincroniza
+  // con la suma de esos aportes para que el móvil vea datos coherentes.
   const goals: {
     name: string;
     targetAmount: number;
     targetDate: Date;
     phase: PlanPhase;
     status: GoalStatus;
+    contributions: { amount: number; note: string; contributedAt: Date }[];
   }[] = [
     {
       name: 'Pay credit card',
@@ -72,6 +100,24 @@ async function main(): Promise<void> {
       targetDate: new Date('2026-07-01'),
       phase: PlanPhase.PHASE_1_DEBT_CONTROL,
       status: GoalStatus.COMPLETED,
+      // Meta completada: los aportes suman exactamente el objetivo.
+      contributions: [
+        {
+          amount: 1_000_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-04-15'),
+        },
+        {
+          amount: 1_000_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-05-15'),
+        },
+        {
+          amount: 1_000_000,
+          note: 'Bono extra',
+          contributedAt: new Date('2026-06-15'),
+        },
+      ],
     },
     {
       name: 'Emergency fund',
@@ -79,6 +125,23 @@ async function main(): Promise<void> {
       targetDate: new Date('2026-08-01'),
       phase: PlanPhase.PHASE_1_DEBT_CONTROL,
       status: GoalStatus.ACTIVE,
+      contributions: [
+        {
+          amount: 1_200_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-05-05'),
+        },
+        {
+          amount: 1_200_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-06-05'),
+        },
+        {
+          amount: 1_500_000,
+          note: 'Bono extra',
+          contributedAt: new Date('2026-07-05'),
+        },
+      ],
     },
     {
       name: 'Vehicle down payment',
@@ -86,6 +149,23 @@ async function main(): Promise<void> {
       targetDate: new Date('2027-02-01'),
       phase: PlanPhase.PHASE_3_VEHICLE_PURCHASE,
       status: GoalStatus.ACTIVE,
+      contributions: [
+        {
+          amount: 1_500_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-05-20'),
+        },
+        {
+          amount: 1_500_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-06-20'),
+        },
+        {
+          amount: 1_500_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-07-20'),
+        },
+      ],
     },
     {
       name: 'International trip',
@@ -93,20 +173,65 @@ async function main(): Promise<void> {
       targetDate: new Date('2026-12-01'),
       phase: PlanPhase.PHASE_3_VEHICLE_PURCHASE,
       status: GoalStatus.ACTIVE,
+      contributions: [
+        {
+          amount: 400_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-06-10'),
+        },
+        {
+          amount: 400_000,
+          note: 'Depósito mensual',
+          contributedAt: new Date('2026-07-10'),
+        },
+      ],
     },
   ];
 
+  let contributionCount = 0;
+
   for (const goal of goals) {
+    const { contributions, ...goalData } = goal;
+
     const existing = await prisma.goal.findFirst({
       where: { userId: user.id, name: goal.name },
     });
 
-    if (!existing) {
-      await prisma.goal.create({ data: { userId: user.id, ...goal } });
+    const record =
+      existing ??
+      (await prisma.goal.create({ data: { userId: user.id, ...goalData } }));
+
+    for (const contribution of contributions) {
+      const existingContribution = await prisma.goalContribution.findFirst({
+        where: {
+          goalId: record.id,
+          note: contribution.note,
+          contributedAt: contribution.contributedAt,
+        },
+      });
+
+      if (!existingContribution) {
+        await prisma.goalContribution.create({
+          data: { goalId: record.id, ...contribution },
+        });
+      }
+
+      contributionCount += 1;
     }
+
+    const currentAmount = contributions.reduce(
+      (total, contribution) => total + contribution.amount,
+      0,
+    );
+
+    await prisma.goal.update({
+      where: { id: record.id },
+      data: { currentAmount },
+    });
   }
 
   console.log(`✓ Goals seeded (${goals.length})`);
+  console.log(`✓ Goal contributions seeded (${contributionCount})`);
 }
 
 main()
