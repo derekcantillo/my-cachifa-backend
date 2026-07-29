@@ -10,6 +10,7 @@ import { AiModule } from '@modules/ai/ai.module';
 import { BudgetsModule } from '@modules/budgets/budgets.module';
 import { ExpensesModule } from '@modules/expenses/expenses.module';
 import { GoalsModule } from '@modules/goals/goals.module';
+import { ReportsModule } from '@modules/reports/reports.module';
 import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
 
 @Module({
@@ -47,6 +48,7 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
     BudgetsModule,
     ExpensesModule,
     GoalsModule,
+    ReportsModule,
     WhatsAppModule,
   ],
 })
