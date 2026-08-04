@@ -8,13 +8,16 @@ import {
   Post,
   Put,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { ApiKeyGuard } from '@common/guards/api-key.guard';
 import { BudgetsService } from './budgets.service';
 import { MonthParamDto } from './dto/month-param.dto';
 import { QueryBudgetsDto } from './dto/query-budgets.dto';
 import { UpsertBudgetsDto } from './dto/upsert-budgets.dto';
 import type { IBudgetResponse } from './interfaces/budget-response.interface';
 
+@UseGuards(ApiKeyGuard)
 @Controller('budgets')
 export class BudgetsController {
   constructor(private readonly budgetsService: BudgetsService) {}

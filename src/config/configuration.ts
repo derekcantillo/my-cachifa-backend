@@ -15,6 +15,7 @@ export interface AiConfig {
 export interface AppConfig {
   port: number;
   nodeEnv: string;
+  apiKey: string;
   databaseUrl: string;
   whatsapp: WhatsAppConfig;
   ai: AiConfig;
@@ -23,6 +24,7 @@ export interface AppConfig {
 export default (): AppConfig => ({
   port: parseInt(process.env['PORT'] ?? '3000', 10),
   nodeEnv: process.env['NODE_ENV'] ?? 'development',
+  apiKey: process.env['API_KEY'] ?? '',
   databaseUrl: process.env['DATABASE_URL'] ?? '',
   whatsapp: {
     phoneNumberId: process.env['WA_PHONE_NUMBER_ID'] ?? '',

@@ -8,13 +8,16 @@ import {
   Param,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
+import { ApiKeyGuard } from '@common/guards/api-key.guard';
 import { CreateContributionDto } from './dto/create-contribution.dto';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 import { GoalsService } from './goals.service';
 import type { IGoalResponse } from './interfaces/goal-response.interface';
 
+@UseGuards(ApiKeyGuard)
 @Controller('goals')
 export class GoalsController {
   constructor(private readonly goalsService: GoalsService) {}

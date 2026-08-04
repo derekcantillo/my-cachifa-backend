@@ -9,13 +9,16 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { ApiKeyGuard } from '@common/guards/api-key.guard';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { QueryTransactionsDto } from './dto/query-transactions.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import type { ITransactionResponse } from './interfaces/transaction-response.interface';
 import { TransactionsService } from './transactions.service';
 
+@UseGuards(ApiKeyGuard)
 @Controller('transactions')
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}

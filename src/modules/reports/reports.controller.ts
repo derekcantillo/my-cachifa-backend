@@ -1,4 +1,5 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiKeyGuard } from '@common/guards/api-key.guard';
 import { QueryMonthDto } from './dto/query-month.dto';
 import type {
   IDistributionItem,
@@ -7,6 +8,7 @@ import type {
 } from './interfaces/report-response.interface';
 import { ReportsService } from './reports.service';
 
+@UseGuards(ApiKeyGuard)
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
