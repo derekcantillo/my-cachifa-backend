@@ -102,10 +102,13 @@ export class GoalsService {
     const reachedTarget = nextCurrentAmount.greaterThanOrEqualTo(
       goal.targetAmount,
     );
+    const contributedAt = dto.contributedAt
+      ? new Date(dto.contributedAt)
+      : new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.goalContribution.create({
-        data: { goalId: id, amount, note: dto.note ?? null },
+        data: { goalId: id, amount, note: dto.note ?? null, contributedAt },
       });
 
       return tx.goal.update({

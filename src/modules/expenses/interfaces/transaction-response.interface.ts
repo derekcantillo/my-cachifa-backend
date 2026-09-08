@@ -5,8 +5,8 @@ import type {
   TransactionType,
 } from '@prisma/client';
 import {
-  toAccountResponse,
-  type IAccountResponse,
+  toAccountSummaryResponse,
+  type IAccountSummaryResponse,
 } from '@modules/accounts/interfaces/account-response.interface';
 
 export type TransactionWithAccount = Transaction & { account: Account | null };
@@ -23,9 +23,12 @@ export interface ITransactionResponse {
   description: string | null;
   tags: string[];
   accountId: string | null;
-  account: IAccountResponse | null;
+  account: IAccountSummaryResponse | null;
+  recurringExpenseId: string | null;
+  loanId: string | null;
   transactionDate: string;
   monthYear: string;
+  budgetPeriod: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -42,10 +45,13 @@ export function toTransactionResponse(
     tags: transaction.tags,
     accountId: transaction.accountId,
     account: transaction.account
-      ? toAccountResponse(transaction.account)
+      ? toAccountSummaryResponse(transaction.account)
       : null,
+    recurringExpenseId: transaction.recurringExpenseId,
+    loanId: transaction.loanId,
     transactionDate: transaction.transactionDate.toISOString(),
     monthYear: transaction.monthYear,
+    budgetPeriod: transaction.budgetPeriod,
     createdAt: transaction.createdAt.toISOString(),
     updatedAt: transaction.updatedAt.toISOString(),
   };

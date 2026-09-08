@@ -40,4 +40,10 @@ export class BudgetsController {
   resetSpent(@Param() params: MonthParamDto): Promise<IBudgetResponse[]> {
     return this.budgetsService.resetSpent(params.month);
   }
+
+  @Post(':month/recalculate')
+  @HttpCode(HttpStatus.OK)
+  recalculate(@Param() params: MonthParamDto): Promise<IBudgetResponse[]> {
+    return this.budgetsService.recalculate(params.month);
+  }
 }

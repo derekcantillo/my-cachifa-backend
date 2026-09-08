@@ -47,6 +47,9 @@ enum Category {
   VEHICLE
   HEALTH
   HOUSING
+  SALARY
+  CONTINGENCY
+  LOAN
   OTHER
 }
 
@@ -55,6 +58,14 @@ enum TransactionType {
   INCOME
   SAVING
   DEBT_PAYMENT
+  LOAN_GIVEN
+  LOAN_REPAYMENT
+}
+
+enum LoanStatus {
+  ACTIVE
+  PARTIALLY_PAID
+  PAID
 }
 
 enum PlanPhase {
@@ -86,58 +97,90 @@ enum AlertType {
   WEEKLY_SUMMARY
   MONTHLY_REPORT
   GOAL_PROGRESS
+  RECURRING_EXPENSE_DUE
+  SAVINGS_TARGET_AT_RISK
 }
 
 // ─── Models ───────────────────────────────────────────────────
 
 model User {
-  id           String        @id @default(cuid())
-  waNumber     String        @unique @map("wa_number")
-  name         String?
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  transactions Transaction[]
-  budgets      Budget[]
-  goals        Goal[]
-  alerts       Alert[]
-  accounts     Account[]
+  id                      String             @id @default(cuid())
+  waNumber                String             @unique @map("wa_number")
+  name                    String?
+  /**
+   * % del ingreso disponible que se recomienda destinar a ahorro/metas.
+   */
+  targetSavingsPercentage Decimal            @default(30.00) @map("target_savings_percentage") @db.Decimal(5, 2)
+  createdAt               DateTime           @default(now()) @map("created_at")
+  updatedAt               DateTime           @updatedAt @map("updated_at")
+  transactions            Transaction[]
+  budgets                 Budget[]
+  budgetRules             BudgetRule[]
+  goals                   Goal[]
+  alerts                  Alert[]
+  accounts                Account[]
+  recurringExpenses       RecurringExpense[]
+  loans                   Loan[]
 
   @@map("users")
 }
 
 model Account {
-  id           String        @id @default(cuid())
-  userId       String        @map("user_id")
-  name         String
-  type         AccountType
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
+  id                 String        @id @default(cuid())
+  userId             String        @map("user_id")
+  name               String
+  type               AccountType
+  /**
+   * Saldo del que parte `currentBalance`, para "ponerse al día" sin reconstruir el historial.
+   */
+  initialBalance     Decimal       @default(0) @map("initial_balance") @db.Decimal(12, 2)
+  /**
+   * Desde cuándo aplica `initialBalance`; sin ella, `currentBalance` suma todo el historial.
+   */
+  initialBalanceDate DateTime?     @map("initial_balance_date")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions       Transaction[]
+  loans              Loan[]
 
   @@index([userId])
   @@map("accounts")
 }
 
 model Transaction {
-  id              String          @id @default(cuid())
-  userId          String          @map("user_id")
-  accountId       String?         @map("account_id")
-  amount          Decimal         @db.Decimal(12, 2)
-  type            TransactionType
-  category        Category
-  description     String?
-  tags            String[]        @default([])
-  rawMessage      String          @map("raw_message")
-  transactionDate DateTime        @default(now()) @map("transaction_date")
-  monthYear       String          @map("month_year")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account         Account?        @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  id                 String            @id @default(cuid())
+  userId             String            @map("user_id")
+  accountId          String?           @map("account_id")
+  recurringExpenseId String?           @map("recurring_expense_id")
+  loanId             String?           @map("loan_id")
+  amount             Decimal           @db.Decimal(12, 2)
+  type               TransactionType
+  category           Category
+  description        String?
+  tags               String[]          @default([])
+  rawMessage         String            @map("raw_message")
+  transactionDate    DateTime          @default(now()) @map("transaction_date")
+  monthYear          String            @map("month_year")
+  /**
+   * `YYYY-MM` que este ingreso "cubre" para efectos de presupuesto. Para
+   * SALARY lo fija quien registra la transacción (desfase entre el mes de
+   * pago de nómina y el mes que cubre); para todo lo demás es siempre igual
+   * a `monthYear`. Ver `IncomeCalculatorService.getEffectiveIncome`.
+   */
+  budgetPeriod       String?           @map("budget_period")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account            Account?          @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  recurringExpense   RecurringExpense? @relation(fields: [recurringExpenseId], references: [id], onDelete: SetNull)
+  // Un préstamo eliminable (sin repagos) se lleva su Transaction vinculada consigo.
+  loan               Loan?             @relation(fields: [loanId], references: [id], onDelete: Cascade)
 
   @@index([userId, monthYear])
   @@index([accountId])
+  @@index([recurringExpenseId])
+  @@index([loanId])
   @@map("transactions")
 }
 
@@ -155,6 +198,51 @@ model Budget {
   @@unique([userId, monthYear, category])
   @@index([userId, monthYear])
   @@map("budgets")
+}
+
+/**
+ * Qué porcentaje del ingreso efectivo del mes se asigna a cada categoría.
+ * `recalculateBudgets` la usa para derivar `Budget.limitAmount`; no toca
+ * `Budget.spentAmount`.
+ */
+model BudgetRule {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  category         Category
+  targetPercentage Decimal  @map("target_percentage") @db.Decimal(5, 2)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@map("budget_rules")
+}
+
+/**
+ * Un compromiso mensual recurrente (arriendo, suscripciones...). Mientras
+ * está `active`, tiene precedencia sobre cualquier `BudgetRule` de la misma
+ * categoría: `recalculateBudgets` fija `Budget.limitAmount` en
+ * `estimatedAmount` en vez de derivarlo de un porcentaje.
+ */
+model RecurringExpense {
+  id              String        @id @default(cuid())
+  userId          String        @map("user_id")
+  name            String
+  category        Category
+  estimatedAmount Decimal       @map("estimated_amount") @db.Decimal(12, 2)
+  /**
+   * Si el monto real varía mes a mes (ej. un servicio) o es siempre igual (ej. arriendo).
+   */
+  isAmountFixed   Boolean       @default(false) @map("is_amount_fixed")
+  dayOfMonth      Int           @map("day_of_month")
+  active          Boolean       @default(true)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+
+  @@index([userId])
+  @@map("recurring_expenses")
 }
 
 model Goal {
@@ -197,4 +285,46 @@ model Alert {
   user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("alerts")
+}
+
+/**
+ * Dinero prestado a un tercero. No participa en ningún cálculo de
+ * presupuesto ni de reporte: la `Transaction` que lo acompaña usa
+ * `LOAN_GIVEN`/`LOAN_REPAYMENT`, tipos que `TransactionsService` y
+ * `ReportsService` nunca incluyen en sus filtros.
+ */
+model Loan {
+  id           String          @id @default(cuid())
+  userId       String          @map("user_id")
+  borrowerName String          @map("borrower_name")
+  amount       Decimal         @db.Decimal(12, 2)
+  amountRepaid Decimal         @default(0) @map("amount_repaid") @db.Decimal(12, 2)
+  status       LoanStatus      @default(ACTIVE)
+  loanDate     DateTime        @map("loan_date")
+  dueDate      DateTime?       @map("due_date")
+  note         String?
+  accountId    String?         @map("account_id")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      Account?        @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  repayments   LoanRepayment[]
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([accountId])
+  @@map("loans")
+}
+
+model LoanRepayment {
+  id        String   @id @default(cuid())
+  loanId    String   @map("loan_id")
+  amount    Decimal  @db.Decimal(12, 2)
+  paidAt    DateTime @default(now()) @map("paid_at")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  loan      Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@index([loanId])
+  @@map("loan_repayments")
 }

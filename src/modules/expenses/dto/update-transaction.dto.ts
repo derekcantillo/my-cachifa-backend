@@ -9,8 +9,10 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
+import { MONTH_YEAR_MESSAGE, MONTH_YEAR_REGEX } from '@common/utils/month.util';
 
 /**
  * Todos los campos son opcionales. `accountId` acepta `null` de forma
@@ -50,4 +52,14 @@ export class UpdateTransactionDto {
   @IsOptional()
   @IsDateString()
   transactionDate?: string;
+
+  /**
+   * `YYYY-MM` que este ingreso cubre. Solo el formato se valida aquí — si el
+   * resultado de la edición (tipo + categoría, ya mezclados con lo
+   * existente) es INCOME + SALARY, el servicio exige que quede un valor;
+   * para cualquier otro caso lo recalcula e ignora lo que venga aquí.
+   */
+  @IsOptional()
+  @Matches(MONTH_YEAR_REGEX, { message: MONTH_YEAR_MESSAGE })
+  budgetPeriod?: string;
 }

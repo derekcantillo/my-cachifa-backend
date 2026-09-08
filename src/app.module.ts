@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import * as Joi from 'joi';
 import configuration from '@config/configuration';
@@ -9,11 +10,15 @@ import { PrismaModule } from '@modules/prisma/prisma.module';
 import { AccountsModule } from '@modules/accounts/accounts.module';
 import { AlertsModule } from '@modules/alerts/alerts.module';
 import { AiModule } from '@modules/ai/ai.module';
+import { BudgetRulesModule } from '@modules/budget-rules/budget-rules.module';
 import { BudgetsModule } from '@modules/budgets/budgets.module';
 import { ExpensesModule } from '@modules/expenses/expenses.module';
 import { GoalsModule } from '@modules/goals/goals.module';
 import { HealthModule } from '@modules/health/health.module';
+import { LoansModule } from '@modules/loans/loans.module';
+import { RecurringExpensesModule } from '@modules/recurring-expenses/recurring-expenses.module';
 import { ReportsModule } from '@modules/reports/reports.module';
+import { SettingsModule } from '@modules/settings/settings.module';
 import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
 
 @Module({
@@ -49,16 +54,21 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60_000, limit: 60 }],
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     CommonModule,
     AccountsModule,
     AlertsModule,
     AiModule,
+    BudgetRulesModule,
     BudgetsModule,
     ExpensesModule,
     GoalsModule,
     HealthModule,
+    LoansModule,
+    RecurringExpensesModule,
     ReportsModule,
+    SettingsModule,
     WhatsAppModule,
   ],
   providers: [
