@@ -11,9 +11,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiKeyGuard } from '@common/guards/api-key.guard';
+import {
+  PeriodParamDto,
+  PeriodQueryDto,
+} from '@modules/financial-periods/dto/period-query.dto';
 import { BudgetsService } from './budgets.service';
-import { MonthParamDto } from './dto/month-param.dto';
-import { QueryBudgetsDto } from './dto/query-budgets.dto';
 import { UpsertBudgetsDto } from './dto/upsert-budgets.dto';
 import type { IBudgetResponse } from './interfaces/budget-response.interface';
 
@@ -23,27 +25,27 @@ export class BudgetsController {
   constructor(private readonly budgetsService: BudgetsService) {}
 
   @Get()
-  findAll(@Query() query: QueryBudgetsDto): Promise<IBudgetResponse[]> {
-    return this.budgetsService.findAll(query.month);
+  findAll(@Query() query: PeriodQueryDto): Promise<IBudgetResponse[]> {
+    return this.budgetsService.findAll(query.periodId);
   }
 
   @Put()
   upsertMany(
-    @Query() query: QueryBudgetsDto,
+    @Query() query: PeriodQueryDto,
     @Body() dto: UpsertBudgetsDto,
   ): Promise<IBudgetResponse[]> {
-    return this.budgetsService.upsertMany(dto, query.month);
+    return this.budgetsService.upsertMany(dto, query.periodId);
   }
 
-  @Post(':month/reset')
+  @Post(':periodId/reset')
   @HttpCode(HttpStatus.OK)
-  resetSpent(@Param() params: MonthParamDto): Promise<IBudgetResponse[]> {
-    return this.budgetsService.resetSpent(params.month);
+  resetSpent(@Param() params: PeriodParamDto): Promise<IBudgetResponse[]> {
+    return this.budgetsService.resetSpent(params.periodId);
   }
 
-  @Post(':month/recalculate')
+  @Post(':periodId/recalculate')
   @HttpCode(HttpStatus.OK)
-  recalculate(@Param() params: MonthParamDto): Promise<IBudgetResponse[]> {
-    return this.budgetsService.recalculate(params.month);
+  recalculate(@Param() params: PeriodParamDto): Promise<IBudgetResponse[]> {
+    return this.budgetsService.recalculate(params.periodId);
   }
 }

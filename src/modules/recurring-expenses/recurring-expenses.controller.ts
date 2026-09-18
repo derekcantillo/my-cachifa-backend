@@ -12,8 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiKeyGuard } from '@common/guards/api-key.guard';
+import { PeriodQueryDto } from '@modules/financial-periods/dto/period-query.dto';
 import { CreateRecurringExpenseDto } from './dto/create-recurring-expense.dto';
-import { PendingQueryDto } from './dto/pending-query.dto';
 import { UpdateRecurringExpenseDto } from './dto/update-recurring-expense.dto';
 import type { IRecurringExpenseResponse } from './interfaces/recurring-expense-response.interface';
 import { RecurringExpensesService } from './recurring-expenses.service';
@@ -33,9 +33,9 @@ export class RecurringExpensesController {
   // Declarado antes que cualquier `:id` para que "pending" no se lea como id.
   @Get('pending')
   findPending(
-    @Query() query: PendingQueryDto,
+    @Query() query: PeriodQueryDto,
   ): Promise<IRecurringExpenseResponse[]> {
-    return this.recurringExpensesService.findPending(query.month);
+    return this.recurringExpensesService.findPending(query.periodId);
   }
 
   @Post()

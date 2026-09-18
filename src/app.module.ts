@@ -17,8 +17,9 @@ import { ExpensesModule } from '@modules/expenses/expenses.module';
 import { GoalsModule } from '@modules/goals/goals.module';
 import { HealthModule } from '@modules/health/health.module';
 import { LoansModule } from '@modules/loans/loans.module';
-import { MonthlyLedgerModule } from '@modules/monthly-ledger/monthly-ledger.module';
+import { FinancialPeriodsModule } from '@modules/financial-periods/financial-periods.module';
 import { NetWorthModule } from '@modules/net-worth/net-worth.module';
+import { PeriodLedgerModule } from '@modules/period-ledger/period-ledger.module';
 import { RecurringExpensesModule } from '@modules/recurring-expenses/recurring-expenses.module';
 import { ReportsModule } from '@modules/reports/reports.module';
 import { SettingsModule } from '@modules/settings/settings.module';
@@ -70,8 +71,9 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
     GoalsModule,
     HealthModule,
     LoansModule,
-    MonthlyLedgerModule,
+    FinancialPeriodsModule,
     NetWorthModule,
+    PeriodLedgerModule,
     RecurringExpensesModule,
     ReportsModule,
     SettingsModule,

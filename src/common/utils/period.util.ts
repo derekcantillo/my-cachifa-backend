@@ -30,6 +30,25 @@ export function startOfFinancialDay(date: Date): Date {
   return new Date(Math.floor(local / DAY_MS) * DAY_MS - OFFSET_MS);
 }
 
+/** Fecha calendario (hora de Colombia) en que cae `date`. `month` es 1-12. */
+export function toFinancialCalendarDate(date: Date): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const local = new Date(date.getTime() + OFFSET_MS);
+  return {
+    year: local.getUTCFullYear(),
+    month: local.getUTCMonth() + 1,
+    day: local.getUTCDate(),
+  };
+}
+
+/** Último día (28-31) del mes calendario `month` (1-12) de `year`. */
+export function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 /** `28 ago 2026`, leído en hora de Colombia. */
 export function formatFinancialDay(date: Date): string {
   const local = new Date(date.getTime() + OFFSET_MS);

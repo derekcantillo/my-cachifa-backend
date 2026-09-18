@@ -54,10 +54,8 @@ export class UpdateTransactionDto {
   transactionDate?: string;
 
   /**
-   * `YYYY-MM` que este ingreso cubre. Solo el formato se valida aquí — si el
-   * resultado de la edición (tipo + categoría, ya mezclados con lo
-   * existente) es INCOME + SALARY, el servicio exige que quede un valor;
-   * para cualquier otro caso lo recalcula e ignora lo que venga aquí.
+   * @deprecated Se acepta para no romper clientes que aún lo envían, pero se
+   * ignora: el período de un salario lo define su `transactionDate`.
    */
   @IsOptional()
   @Matches(MONTH_YEAR_REGEX, { message: MONTH_YEAR_MESSAGE })

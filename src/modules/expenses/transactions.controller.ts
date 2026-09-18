@@ -12,8 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiKeyGuard } from '@common/guards/api-key.guard';
+import { PeriodQueryDto } from '@modules/financial-periods/dto/period-query.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
-import { QueryTransactionsDto } from './dto/query-transactions.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import type { ITransactionResponse } from './interfaces/transaction-response.interface';
 import { TransactionsService } from './transactions.service';
@@ -24,10 +24,8 @@ export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
   @Get()
-  findAll(
-    @Query() query: QueryTransactionsDto,
-  ): Promise<ITransactionResponse[]> {
-    return this.transactionsService.findAll(query.month);
+  findAll(@Query() query: PeriodQueryDto): Promise<ITransactionResponse[]> {
+    return this.transactionsService.findAll(query.periodId);
   }
 
   @Get(':id')

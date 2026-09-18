@@ -26,8 +26,8 @@ export class BudgetRulesService {
 
   /**
    * Upsert de cada regla por (userId, category). No dispara recálculo de
-   * `Budget` — eso es explícito vía `POST /budgets/:month/recalculate`, para
-   * que ajustar reglas no reescriba de golpe todos los meses ya existentes.
+   * `Budget` — eso es explícito vía `POST /budgets/:periodId/recalculate`, para
+   * que ajustar reglas no reescriba de golpe todos los períodos ya existentes.
    */
   async upsertMany(
     dto: UpsertBudgetRulesDto,

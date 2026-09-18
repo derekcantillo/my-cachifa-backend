@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { GoalStatus, Prisma } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
-import { toMonthYear } from '@common/utils/month.util';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
-import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
+import { earliestDate } from '@modules/financial-periods/financial-period.service';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateContributionDto } from './dto/create-contribution.dto';
 import type { CreateGoalDto } from './dto/create-goal.dto';
@@ -92,19 +92,21 @@ export class GoalsService {
     const userId = await this.currentUser.getUserId();
     const goal = await this.findOwned(id, userId);
 
-    // Borrar la meta se lleva sus aportes (FK en cascada): los meses en que
-    // se aportó recuperan ese dinero como disponible.
-    const contributionMonths = goal.contributions.map((contribution) =>
-      toMonthYear(contribution.contributedAt),
+    // Borrar la meta se lleva sus aportes (FK en cascada): los períodos en
+    // que se aportó recuperan ese dinero como disponible.
+    const contributionDates = goal.contributions.map(
+      (contribution) => contribution.contributedAt,
     );
 
     await this.prisma.$transaction(async (tx) => {
       await tx.goal.delete({ where: { id } });
-      await this.budgetRecalculation.recalculateFromMonths(
-        tx,
-        userId,
-        contributionMonths,
-      );
+      if (contributionDates.length > 0) {
+        await this.budgetRecalculation.recalculateFrom(
+          tx,
+          userId,
+          earliestDate(...contributionDates),
+        );
+      }
     }, CASCADE_TRANSACTION_OPTIONS);
   }
 
@@ -138,9 +140,7 @@ export class GoalsService {
         include: CONTRIBUTIONS_DESC,
       });
 
-      await this.budgetRecalculation.recalculateFromMonths(tx, userId, [
-        toMonthYear(contributedAt),
-      ]);
+      await this.budgetRecalculation.recalculateFrom(tx, userId, contributedAt);
 
       return goalAfter;
     }, CASCADE_TRANSACTION_OPTIONS);

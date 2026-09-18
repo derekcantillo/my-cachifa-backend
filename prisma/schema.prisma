@@ -99,6 +99,7 @@ enum AlertType {
   GOAL_PROGRESS
   RECURRING_EXPENSE_DUE
   SAVINGS_TARGET_AT_RISK
+  PERIOD_DEFICIT
 }
 
 // ─── Models ───────────────────────────────────────────────────
@@ -121,7 +122,7 @@ model User {
   accounts                Account[]
   recurringExpenses       RecurringExpense[]
   loans                   Loan[]
-  monthlyLedgers          MonthlyLedger[]
+  periodLedgers           PeriodLedger[]
   financialPeriods        FinancialPeriod[]
 
   @@map("users")
@@ -163,12 +164,18 @@ model Transaction {
   tags               String[]          @default([])
   rawMessage         String            @map("raw_message")
   transactionDate    DateTime          @default(now()) @map("transaction_date")
+  /**
+   * @deprecated `YYYY-MM` (hora de Bogotá) de `transactionDate`. Ningún
+   * cálculo lo lee ya — budgets, ledger y reports agrupan por `periodId`.
+   * Se sigue escribiendo solo porque el móvil aún lo lee de la respuesta;
+   * retirarlo cuando el móvil deje de hacerlo.
+   */
   monthYear          String            @map("month_year")
   /**
-   * `YYYY-MM` que este ingreso "cubre" para efectos de presupuesto. Para
-   * SALARY lo fija quien registra la transacción (desfase entre el mes de
-   * pago de nómina y el mes que cubre); para todo lo demás es siempre igual
-   * a `monthYear`. Ver `IncomeCalculatorService.getEffectiveIncome`.
+   * @deprecated Mes que "cubría" un salario en el modelo de mes calendario.
+   * El período de un salario ahora lo define su fecha; ya no se escribe ni
+   * se lee en ningún cálculo. Se conserva el histórico y se devuelve en la
+   * respuesta por compatibilidad con el móvil.
    */
   budgetPeriod       String?           @map("budget_period")
   /**
@@ -187,34 +194,39 @@ model Transaction {
   loan               Loan?             @relation(fields: [loanId], references: [id], onDelete: Cascade)
   period             FinancialPeriod?  @relation(fields: [periodId], references: [id], onDelete: SetNull)
 
-  @@index([userId, monthYear])
-  @@index([periodId])
+  @@index([userId, periodId])
   @@index([accountId])
   @@index([recurringExpenseId])
   @@index([loanId])
   @@map("transactions")
 }
 
+/**
+ * Presupuesto de una categoría en un período financiero. `spentAmount` es
+ * derivado: `BudgetRecalculationService` lo recalcula de las transacciones
+ * del período. Se borra con el período (ej. si su salario se elimina).
+ */
 model Budget {
-  id          String   @id @default(cuid())
-  userId      String   @map("user_id")
-  monthYear   String   @map("month_year")
+  id          String          @id @default(cuid())
+  userId      String          @map("user_id")
+  periodId    String          @map("period_id")
   category    Category
-  limitAmount Decimal  @map("limit_amount") @db.Decimal(12, 2)
-  spentAmount Decimal  @default(0) @map("spent_amount") @db.Decimal(12, 2)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  limitAmount Decimal         @map("limit_amount") @db.Decimal(12, 2)
+  spentAmount Decimal         @default(0) @map("spent_amount") @db.Decimal(12, 2)
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period      FinancialPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, monthYear, category])
-  @@index([userId, monthYear])
+  @@unique([userId, periodId, category])
+  @@index([periodId])
   @@map("budgets")
 }
 
 /**
- * Qué porcentaje del ingreso efectivo del mes se asigna a cada categoría.
- * `recalculateBudgets` la usa para derivar `Budget.limitAmount`; no toca
- * `Budget.spentAmount`.
+ * Qué porcentaje de la base del período (`openingBalance + income -
+ * compromisos fijos`) se asigna a cada categoría. `recalculateBudgets` la usa
+ * para derivar `Budget.limitAmount`.
  */
 model BudgetRule {
   id               String   @id @default(cuid())
@@ -232,8 +244,9 @@ model BudgetRule {
 /**
  * Un compromiso mensual recurrente (arriendo, suscripciones...). Mientras
  * está `active`, tiene precedencia sobre cualquier `BudgetRule` de la misma
- * categoría: `recalculateBudgets` fija `Budget.limitAmount` en
- * `estimatedAmount` en vez de derivarlo de un porcentaje.
+ * categoría: `recalculateBudgets` fija `Budget.limitAmount` en la suma de los
+ * `estimatedAmount` activos de esa categoría en vez de derivarlo de un
+ * porcentaje.
  */
 model RecurringExpense {
   id              String        @id @default(cuid())
@@ -341,30 +354,30 @@ model LoanRepayment {
 }
 
 /**
- * Saldo rodante mes a mes (estilo YNAB): lo que sobra de un mes pasa a ser
- * `openingBalance` del siguiente. Es un dato derivado — la fuente de verdad
- * siguen siendo `Transaction` y `GoalContribution` — que
- * `MonthlyLedgerService.recalculateLedgerCascade` mantiene al día.
+ * Saldo rodante período a período (estilo YNAB): lo que sobra de un período
+ * pasa a ser `openingBalance` del siguiente (por `startDate`). Es un dato
+ * derivado — la fuente de verdad siguen siendo `Transaction` y
+ * `GoalContribution` — que `PeriodLedgerService.recalculateLedgerCascade`
+ * mantiene al día.
  * closingBalance = openingBalance + income - expenses - savings
  */
-model MonthlyLedger {
-  id             String   @id @default(cuid())
-  userId         String   @map("user_id")
-  /**
-   * `YYYY-MM`.
-   */
-  month          String
-  openingBalance Decimal  @default(0) @map("opening_balance") @db.Decimal(14, 2)
-  income         Decimal  @default(0) @db.Decimal(14, 2)
-  expenses       Decimal  @default(0) @db.Decimal(14, 2)
-  savings        Decimal  @default(0) @db.Decimal(14, 2)
-  closingBalance Decimal  @default(0) @map("closing_balance") @db.Decimal(14, 2)
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+model PeriodLedger {
+  id             String          @id @default(cuid())
+  userId         String          @map("user_id")
+  periodId       String          @map("period_id")
+  openingBalance Decimal         @default(0) @map("opening_balance") @db.Decimal(14, 2)
+  income         Decimal         @default(0) @db.Decimal(14, 2)
+  expenses       Decimal         @default(0) @db.Decimal(14, 2)
+  savings        Decimal         @default(0) @db.Decimal(14, 2)
+  closingBalance Decimal         @default(0) @map("closing_balance") @db.Decimal(14, 2)
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period         FinancialPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, month])
-  @@map("monthly_ledgers")
+  @@unique([userId, periodId])
+  @@index([periodId])
+  @@map("period_ledgers")
 }
 
 /**
@@ -379,20 +392,22 @@ model MonthlyLedger {
  * reconstruye.
  */
 model FinancialPeriod {
-  id           String        @id @default(cuid())
-  userId       String        @map("user_id")
+  id           String         @id @default(cuid())
+  userId       String         @map("user_id")
   label        String
-  startDate    DateTime      @map("start_date")
-  endDate      DateTime?     @map("end_date")
+  startDate    DateTime       @map("start_date")
+  endDate      DateTime?      @map("end_date")
   /**
    * `Transaction` SALARY que abrió el período. Sin FK a propósito: al borrar
    * ese salario, el servicio fusiona el período con el anterior.
    */
-  anchorTxId   String?       @map("anchor_tx_id")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anchorTxId   String?        @map("anchor_tx_id")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+  budgets      Budget[]
+  ledgers      PeriodLedger[]
 
   @@unique([userId, startDate])
   @@map("financial_periods")

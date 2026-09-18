@@ -1,27 +1,30 @@
-import type { MonthlyLedger } from '@prisma/client';
+import type { FinancialPeriod, PeriodLedger } from '@prisma/client';
 
 /** Montos como `number` en JSON; en base de datos son `Decimal(14,2)`. */
-export interface IMonthlyLedgerResponse {
+export interface IPeriodLedgerResponse {
   id: string;
-  month: string;
-  /** `closingBalance` del mes anterior (el rollover). */
+  periodId: string;
+  periodLabel: string;
+  /** `closingBalance` del período anterior (el rollover). */
   openingBalance: number;
   income: number;
   expenses: number;
   savings: number;
   closingBalance: number;
-  /** Lo que queda libre para gastar en el mes, rollover incluido. Hoy es igual a `closingBalance`. */
+  /** Lo que queda libre para gastar en el período, rollover incluido. Hoy es igual a `closingBalance`. */
   availableToSpend: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export function toMonthlyLedgerResponse(
-  ledger: MonthlyLedger,
-): IMonthlyLedgerResponse {
+export function toPeriodLedgerResponse(
+  ledger: PeriodLedger,
+  period: FinancialPeriod,
+): IPeriodLedgerResponse {
   return {
     id: ledger.id,
-    month: ledger.month,
+    periodId: ledger.periodId,
+    periodLabel: period.label,
     openingBalance: ledger.openingBalance.toNumber(),
     income: ledger.income.toNumber(),
     expenses: ledger.expenses.toNumber(),

@@ -1,6 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiKeyGuard } from '@common/guards/api-key.guard';
-import { QueryMonthDto } from './dto/query-month.dto';
+import { PeriodQueryDto } from '@modules/financial-periods/dto/period-query.dto';
 import type {
   IDistributionItem,
   IReportSummary,
@@ -14,13 +14,15 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get('summary')
-  getSummary(@Query() query: QueryMonthDto): Promise<IReportSummary> {
-    return this.reportsService.getSummary(query.month);
+  getSummary(@Query() query: PeriodQueryDto): Promise<IReportSummary> {
+    return this.reportsService.getSummary(query.periodId);
   }
 
   @Get('distribution')
-  getDistribution(@Query() query: QueryMonthDto): Promise<IDistributionItem[]> {
-    return this.reportsService.getDistribution(query.month);
+  getDistribution(
+    @Query() query: PeriodQueryDto,
+  ): Promise<IDistributionItem[]> {
+    return this.reportsService.getDistribution(query.periodId);
   }
 
   @Get('savings-projection')

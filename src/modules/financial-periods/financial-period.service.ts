@@ -1,16 +1,24 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   Category,
   TransactionType,
   type FinancialPeriod,
   type Prisma,
 } from '@prisma/client';
+import { CurrentUserService } from '@common/services/current-user.service';
 import {
   formatPeriodLabel,
   startOfFinancialDay,
 } from '@common/utils/period.util';
 import { PrismaService } from '@modules/prisma/prisma.service';
-import type { IMigratePeriodsResponse } from './interfaces/migrate-periods-response.interface';
+import {
+  toFinancialPeriodResponse,
+  type IFinancialPeriodResponse,
+} from './interfaces/financial-period-response.interface';
 
 type Client = Prisma.TransactionClient;
 
@@ -30,14 +38,19 @@ interface IPeriodTransaction {
   periodId: string | null;
 }
 
+export interface IPeriodAssignment {
+  period: FinancialPeriod;
+  /**
+   * Fecha más antigua cuyo período pudo cambiar: la de la transacción o, si
+   * hubo que rehacer la secuencia (un salario, o una fecha anterior a todo
+   * período), el inicio del primer período tocado. Desde ahí hay que
+   * recalcular ledger y presupuestos.
+   */
+  affectedFrom: Date;
+}
+
 /** Clave de emparejamiento entre períodos guardados y deseados. */
 const BOOTSTRAP_KEY = '__bootstrap__';
-
-/**
- * Timeout del `$transaction` de la migración: reconstruye todos los períodos
- * de un usuario y reasigna todo su historial.
- */
-const MIGRATION_TRANSACTION_OPTIONS = { timeout: 60_000 } as const;
 
 export function isSalary(tx: {
   type: TransactionType;
@@ -46,18 +59,89 @@ export function isSalary(tx: {
   return tx.type === TransactionType.INCOME && tx.category === Category.SALARY;
 }
 
+export function earliestDate(...dates: Date[]): Date {
+  return new Date(Math.min(...dates.map((date) => date.getTime())));
+}
+
 /**
  * Mantiene la secuencia de `FinancialPeriod` de un usuario: cada salario abre
  * un período en su día (hora de Colombia) y cierra el anterior. Lo que se
  * registró antes del primer salario vive en un período "de arranque" sin
  * `anchorTxId`, que empieza el día de la transacción más antigua.
  *
- * Todos los métodos reciben el cliente de Prisma para correr dentro del
+ * Los métodos que mutan reciben el cliente de Prisma para correr dentro del
  * `$transaction` de la mutación que los dispara.
  */
 @Injectable()
 export class FinancialPeriodService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly currentUser: CurrentUserService,
+  ) {}
+
+  async findAll(): Promise<IFinancialPeriodResponse[]> {
+    const userId = await this.currentUser.getUserId();
+
+    const periods = await this.prisma.financialPeriod.findMany({
+      where: { userId },
+      orderBy: { startDate: 'desc' },
+    });
+
+    return periods.map(toFinancialPeriodResponse);
+  }
+
+  async findCurrent(): Promise<IFinancialPeriodResponse> {
+    const userId = await this.currentUser.getUserId();
+    const period = await this.prisma.$transaction((tx) =>
+      this.getCurrentPeriod(tx, userId),
+    );
+    return toFinancialPeriodResponse(period);
+  }
+
+  /**
+   * El período abierto (`endDate = null`). Si el usuario todavía no tiene
+   * ninguno (sin transacciones), se deriva uno de arranque que empieza hoy.
+   */
+  async getCurrentPeriod(
+    client: Client,
+    userId: string,
+  ): Promise<FinancialPeriod> {
+    const open = await client.financialPeriod.findFirst({
+      where: { userId, endDate: null },
+      orderBy: { startDate: 'desc' },
+    });
+    if (open) return open;
+
+    return this.findOrCreatePeriodForDate(client, userId, new Date());
+  }
+
+  /** El período `periodId` si es del usuario; 404 si no existe o es de otro. */
+  async findOwnedPeriod(
+    client: Client,
+    userId: string,
+    periodId: string,
+  ): Promise<FinancialPeriod> {
+    const period = await client.financialPeriod.findFirst({
+      where: { id: periodId, userId },
+    });
+
+    if (!period) {
+      throw new NotFoundException(`FinancialPeriod ${periodId} not found`);
+    }
+
+    return period;
+  }
+
+  /** `periodId` validado, o el período actual si se omite. */
+  resolvePeriod(
+    client: Client,
+    userId: string,
+    periodId?: string,
+  ): Promise<FinancialPeriod> {
+    return periodId
+      ? this.findOwnedPeriod(client, userId, periodId)
+      : this.getCurrentPeriod(client, userId);
+  }
 
   /**
    * Período en cuyo rango `[startDate, endDate)` cae `date`. Si la fecha es la
@@ -71,12 +155,58 @@ export class FinancialPeriodService {
     date: Date,
     options: { opensPeriod?: boolean } = {},
   ): Promise<FinancialPeriod> {
-    if (!options.opensPeriod) {
-      const existing = await this.findPeriodForDate(client, userId, date);
-      if (existing) return existing;
+    return (await this.locate(client, userId, date, options)).period;
+  }
+
+  /** Fija `periodId` de `tx` según su `transactionDate`. */
+  async assignTransactionToPeriod(
+    client: Client,
+    tx: IPeriodTransaction,
+  ): Promise<IPeriodAssignment> {
+    const assignment = await this.locate(
+      client,
+      tx.userId,
+      tx.transactionDate,
+      { opensPeriod: isSalary(tx) },
+    );
+
+    if (tx.periodId !== assignment.period.id) {
+      await client.transaction.update({
+        where: { id: tx.id },
+        data: { periodId: assignment.period.id },
+      });
     }
 
-    await this.rebuild(client, userId, date, date);
+    return assignment;
+  }
+
+  /**
+   * Reconstruye la secuencia de períodos a partir de los salarios actuales
+   * (tras crear, mover o borrar uno) y reasigna `periodId` de toda
+   * transacción desde el período que contiene `from`. Los períodos que no
+   * cambian no se reescriben y conservan su `id`. Devuelve la fecha más
+   * antigua afectada (ver `IPeriodAssignment.affectedFrom`).
+   */
+  recalculatePeriodsFrom(
+    client: Client,
+    userId: string,
+    from: Date,
+  ): Promise<Date> {
+    return this.rebuild(client, userId, from);
+  }
+
+  private async locate(
+    client: Client,
+    userId: string,
+    date: Date,
+    options: { opensPeriod?: boolean },
+  ): Promise<IPeriodAssignment> {
+    if (!options.opensPeriod) {
+      const existing = await this.findPeriodForDate(client, userId, date);
+      if (existing) return { period: existing, affectedFrom: date };
+    }
+
+    const boundary = await this.rebuild(client, userId, date, date);
 
     const period = await this.findPeriodForDate(client, userId, date);
     if (!period) {
@@ -84,87 +214,7 @@ export class FinancialPeriodService {
         `No financial period covers ${date.toISOString()} after rebuilding`,
       );
     }
-    return period;
-  }
-
-  /** Fija `periodId` de `tx` según su `transactionDate`. */
-  async assignTransactionToPeriod(
-    client: Client,
-    tx: IPeriodTransaction,
-  ): Promise<FinancialPeriod> {
-    const period = await this.findOrCreatePeriodForDate(
-      client,
-      tx.userId,
-      tx.transactionDate,
-      { opensPeriod: isSalary(tx) },
-    );
-
-    if (tx.periodId !== period.id) {
-      await client.transaction.update({
-        where: { id: tx.id },
-        data: { periodId: period.id },
-      });
-    }
-
-    return period;
-  }
-
-  /**
-   * Reconstruye la secuencia de períodos a partir de los salarios actuales
-   * (tras crear, mover o borrar uno) y reasigna `periodId` de toda
-   * transacción desde el período que contiene `from`. Los períodos que no
-   * cambian no se reescriben y conservan su `id`.
-   */
-  async recalculatePeriodsFrom(
-    client: Client,
-    userId: string,
-    from: Date,
-  ): Promise<void> {
-    await this.rebuild(client, userId, from);
-  }
-
-  /**
-   * Migración única desde el modelo de mes calendario: construye los
-   * períodos de cada usuario a partir de sus salarios y asigna `periodId` a
-   * todo su historial. Es idempotente — correrla de nuevo no cambia nada.
-   */
-  async migrateAll(): Promise<IMigratePeriodsResponse> {
-    const users = await this.prisma.user.findMany({ select: { id: true } });
-    const results: IMigratePeriodsResponse['users'] = [];
-
-    for (const { id: userId } of users) {
-      const result = await this.prisma.$transaction(async (tx) => {
-        await this.rebuild(tx, userId, new Date(0));
-
-        const [periods, transactions, unassigned] = await Promise.all([
-          tx.financialPeriod.findMany({
-            where: { userId },
-            orderBy: { startDate: 'asc' },
-            include: { _count: { select: { transactions: true } } },
-          }),
-          tx.transaction.count({ where: { userId } }),
-          tx.transaction.count({ where: { userId, periodId: null } }),
-        ]);
-
-        return {
-          userId,
-          transactions,
-          unassigned,
-          periods: periods.map((period) => ({
-            id: period.id,
-            label: period.label,
-            startDate: period.startDate.toISOString(),
-            endDate: period.endDate?.toISOString() ?? null,
-            anchorTxId: period.anchorTxId,
-            transactionCount: period._count.transactions,
-          })),
-        };
-      }, MIGRATION_TRANSACTION_OPTIONS);
-
-      results.push(result);
-    }
-
-    return { users: results };
+    return { period, affectedFrom: earliestDate(boundary, date) };
   }
 
   private findPeriodForDate(
@@ -191,7 +241,7 @@ export class FinancialPeriodService {
     userId: string,
     from: Date,
     coverDate?: Date,
-  ): Promise<void> {
+  ): Promise<Date> {
     const [salaries, oldest, existing] = await Promise.all([
       client.transaction.findMany({
         where: {
@@ -253,9 +303,7 @@ export class FinancialPeriodService {
       ]),
       ...toCreate.map((spec) => spec.startDate),
     ];
-    const boundary = new Date(
-      Math.min(...touchedDates.map((date) => date.getTime())),
-    );
+    const boundary = earliestDate(...touchedDates);
 
     if (toDelete.length > 0) {
       await client.financialPeriod.deleteMany({
@@ -307,6 +355,8 @@ export class FinancialPeriodService {
         data: { periodId: period.id },
       });
     }
+
+    return boundary;
   }
 }
 

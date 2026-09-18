@@ -76,7 +76,7 @@ export class AlertsService {
    * Crea el `Alert` solo si no existe ya uno del mismo `type` con este
    * `dedupeKey` — el mensaje lo lleva como prefijo `[dedupeKey]` en vez de
    * agregar una columna de referencia, ya que basta para no duplicar (una
-   * `SAVINGS_TARGET_AT_RISK` por mes, una `RECURRING_EXPENSE_DUE` por mes y
+   * `SAVINGS_TARGET_AT_RISK`/`PERIOD_DEFICIT` por período, una `RECURRING_EXPENSE_DUE` por período y
    * por gasto). Recibe el cliente de Prisma para poder correr dentro de la
    * transacción de quien la invoca.
    */

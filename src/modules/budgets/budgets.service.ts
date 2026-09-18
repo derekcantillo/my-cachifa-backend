@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
-import { currentMonthYear } from '@common/utils/month.util';
-import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
+import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { BudgetRecalculationService } from './budget-recalculation.service';
 import type { UpsertBudgetsDto } from './dto/upsert-budgets.dto';
@@ -16,35 +16,49 @@ export class BudgetsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
+    private readonly financialPeriods: FinancialPeriodService,
     private readonly budgetRecalculation: BudgetRecalculationService,
   ) {}
 
-  async findAll(month?: string): Promise<IBudgetResponse[]> {
+  async findAll(periodId?: string): Promise<IBudgetResponse[]> {
     const userId = await this.currentUser.getUserId();
-    return this.listMonth(userId, month ?? currentMonthYear());
+    const period = await this.financialPeriods.resolvePeriod(
+      this.prisma,
+      userId,
+      periodId,
+    );
+    return this.listPeriod(userId, period.id);
   }
 
-  /** Upsert de los límites del mes. Nunca toca `spentAmount`. */
+  /**
+   * Upsert manual de los límites del período. Nunca toca `spentAmount`. Un
+   * recálculo posterior sobreescribe los de categorías con gasto fijo o
+   * `BudgetRule`; los demás se conservan.
+   */
   async upsertMany(
     dto: UpsertBudgetsDto,
-    month?: string,
+    periodId?: string,
   ): Promise<IBudgetResponse[]> {
     const userId = await this.currentUser.getUserId();
-    const monthYear = month ?? currentMonthYear();
+    const period = await this.financialPeriods.resolvePeriod(
+      this.prisma,
+      userId,
+      periodId,
+    );
 
     await this.prisma.$transaction(
       dto.items.map((item) =>
         this.prisma.budget.upsert({
           where: {
-            userId_monthYear_category: {
+            userId_periodId_category: {
               userId,
-              monthYear,
+              periodId: period.id,
               category: item.category,
             },
           },
           create: {
             userId,
-            monthYear,
+            periodId: period.id,
             category: item.category,
             limitAmount: new Prisma.Decimal(item.limitAmount),
           },
@@ -53,48 +67,56 @@ export class BudgetsService {
       ),
     );
 
-    return this.listMonth(userId, monthYear);
+    return this.listPeriod(userId, period.id);
   }
 
   /**
-   * Reaplica las `BudgetRule` del usuario al mes dado, bajo demanda —
-   * refrescando antes su `MonthlyLedger` (y en cascada los meses siguientes)
-   * para que el ingreso base incluya el rollover al día.
+   * Reaplica gastos fijos y `BudgetRule` al período, bajo demanda —
+   * refrescando antes su `PeriodLedger` (y en cascada los siguientes) para
+   * que la base incluya el rollover al día.
    */
-  async recalculate(month: string): Promise<IBudgetResponse[]> {
+  async recalculate(periodId: string): Promise<IBudgetResponse[]> {
     const userId = await this.currentUser.getUserId();
 
-    await this.prisma.$transaction(
-      (tx) =>
-        this.budgetRecalculation.recalculateFromMonths(
-          tx,
-          userId,
-          [month],
-          [month],
-        ),
-      CASCADE_TRANSACTION_OPTIONS,
-    );
+    await this.prisma.$transaction(async (tx) => {
+      const period = await this.financialPeriods.findOwnedPeriod(
+        tx,
+        userId,
+        periodId,
+      );
+      await this.budgetRecalculation.recalculateFrom(
+        tx,
+        userId,
+        period.startDate,
+      );
+    }, CASCADE_TRANSACTION_OPTIONS);
 
-    return this.listMonth(userId, month);
+    return this.listPeriod(userId, periodId);
   }
 
-  async resetSpent(month: string): Promise<IBudgetResponse[]> {
+  /**
+   * Reinicia `spentAmount` del período a lo que dicen sus transacciones. Con
+   * períodos, el gasto de un período nuevo ya arranca en 0; ponerlo en 0 a
+   * mano solo duraría hasta la siguiente transacción, así que "reset" es
+   * resincronizar con la fuente de verdad.
+   */
+  async resetSpent(periodId: string): Promise<IBudgetResponse[]> {
     const userId = await this.currentUser.getUserId();
 
-    await this.prisma.budget.updateMany({
-      where: { userId, monthYear: month },
-      data: { spentAmount: 0 },
+    await this.prisma.$transaction(async (tx) => {
+      await this.financialPeriods.findOwnedPeriod(tx, userId, periodId);
+      await this.budgetRecalculation.syncSpent(tx, userId, periodId);
     });
 
-    return this.listMonth(userId, month);
+    return this.listPeriod(userId, periodId);
   }
 
-  private async listMonth(
+  private async listPeriod(
     userId: string,
-    monthYear: string,
+    periodId: string,
   ): Promise<IBudgetResponse[]> {
     const budgets = await this.prisma.budget.findMany({
-      where: { userId, monthYear },
+      where: { userId, periodId },
       orderBy: { category: 'asc' },
     });
 

@@ -3,15 +3,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Category, Prisma, TransactionType } from '@prisma/client';
+import { Prisma, type Category } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
-import { currentMonthYear, toMonthYear } from '@common/utils/month.util';
+import { toMonthYear } from '@common/utils/month.util';
 import {
   FinancialPeriodService,
+  earliestDate,
   isSalary,
 } from '@modules/financial-periods/financial-period.service';
-import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateTransactionDto } from './dto/create-transaction.dto';
 import type { UpdateTransactionDto } from './dto/update-transaction.dto';
@@ -20,12 +21,6 @@ import {
   type ITransactionResponse,
   type TransactionWithAccount,
 } from './interfaces/transaction-response.interface';
-
-/** Solo estos tipos consumen presupuesto. */
-const BUDGET_AFFECTING_TYPES: ReadonlySet<TransactionType> = new Set([
-  TransactionType.EXPENSE,
-  TransactionType.DEBT_PAYMENT,
-]);
 
 @Injectable()
 export class TransactionsService {
@@ -36,11 +31,16 @@ export class TransactionsService {
     private readonly financialPeriods: FinancialPeriodService,
   ) {}
 
-  async findAll(month?: string): Promise<ITransactionResponse[]> {
+  async findAll(periodId?: string): Promise<ITransactionResponse[]> {
     const userId = await this.currentUser.getUserId();
+    const period = await this.financialPeriods.resolvePeriod(
+      this.prisma,
+      userId,
+      periodId,
+    );
 
     const transactions = await this.prisma.transaction.findMany({
-      where: { userId, monthYear: month ?? currentMonthYear() },
+      where: { userId, periodId: period.id },
       include: { account: true },
       orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }],
     });
@@ -67,14 +67,6 @@ export class TransactionsService {
     const transactionDate = dto.transactionDate
       ? new Date(dto.transactionDate)
       : new Date();
-    const monthYear = toMonthYear(transactionDate);
-    const amount = new Prisma.Decimal(dto.amount);
-    const budgetPeriod = this.resolveBudgetPeriod(
-      dto.type,
-      dto.category,
-      monthYear,
-      dto.budgetPeriod,
-    );
 
     const created = await this.prisma.$transaction(async (tx) => {
       const transaction = await tx.transaction.create({
@@ -82,7 +74,7 @@ export class TransactionsService {
           userId,
           accountId,
           recurringExpenseId,
-          amount,
+          amount: new Prisma.Decimal(dto.amount),
           type: dto.type,
           category: dto.category,
           description: dto.description ?? null,
@@ -91,32 +83,19 @@ export class TransactionsService {
           // guardamos la descripción como origen del registro.
           rawMessage: dto.description ?? '',
           transactionDate,
-          monthYear,
-          budgetPeriod,
+          // Deprecado: solo lo lee el móvil. `budgetPeriod` ya no se escribe.
+          monthYear: toMonthYear(transactionDate),
         },
         include: { account: true },
       });
 
       // Un salario abre su período y cierra el anterior; cualquier otra
       // transacción solo cae en el período que cubre su fecha.
-      const period = await this.financialPeriods.assignTransactionToPeriod(
-        tx,
-        transaction,
-      );
+      const { period, affectedFrom } =
+        await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
       transaction.periodId = period.id;
 
-      if (BUDGET_AFFECTING_TYPES.has(dto.type)) {
-        await this.addToBudget(tx, userId, monthYear, dto.category, amount);
-      }
-
-      // Un salario pagado en agosto que cubre septiembre arranca la cascada
-      // en agosto (el más antiguo de los dos) y llega al menos a septiembre.
-      await this.budgetRecalculation.recalculateFromMonths(
-        tx,
-        userId,
-        [monthYear, budgetPeriod],
-        dto.type === TransactionType.INCOME ? [budgetPeriod] : [],
-      );
+      await this.budgetRecalculation.recalculateFrom(tx, userId, affectedFrom);
 
       return transaction;
     }, CASCADE_TRANSACTION_OPTIONS);
@@ -135,58 +114,21 @@ export class TransactionsService {
       await this.assertAccountOwnership(dto.accountId, userId);
     }
 
-    const nextType = dto.type ?? existing.type;
-    const nextCategory = dto.category ?? existing.category;
-    const nextAmount =
-      dto.amount === undefined
-        ? existing.amount
-        : new Prisma.Decimal(dto.amount);
     const nextDate = dto.transactionDate
       ? new Date(dto.transactionDate)
       : existing.transactionDate;
-    const nextMonthYear = toMonthYear(nextDate);
-    const nextBudgetPeriod = this.resolveBudgetPeriod(
-      nextType,
-      nextCategory,
-      nextMonthYear,
-      dto.budgetPeriod,
-      existing.budgetPeriod,
-    );
-
-    // Si el ingreso ya afectaba un mes (o pasa a afectarlo), recalcular tanto
-    // el mes anterior como el nuevo — pueden diferir si la edición mueve
-    // `budgetPeriod`/`monthYear` o cambia tipo/categoría.
-    const affectedIncomeMonths = new Set(
-      [existing.budgetPeriod, nextBudgetPeriod].filter(
-        (month): month is string => Boolean(month),
-      ),
-    );
-    const touchesIncome =
-      existing.type === TransactionType.INCOME ||
-      nextType === TransactionType.INCOME;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // Se revierte el efecto anterior y se aplica el nuevo. Esto cubre
-      // cambios de monto, categoría, tipo y fecha (que puede mover el mes).
-      if (BUDGET_AFFECTING_TYPES.has(existing.type)) {
-        await this.removeFromBudget(
-          tx,
-          userId,
-          existing.monthYear,
-          existing.category,
-          existing.amount,
-        );
-      }
-
       const transaction = await tx.transaction.update({
         where: { id },
         data: {
-          amount: nextAmount,
-          type: nextType,
-          category: nextCategory,
+          ...(dto.amount !== undefined
+            ? { amount: new Prisma.Decimal(dto.amount) }
+            : {}),
+          ...(dto.type !== undefined ? { type: dto.type } : {}),
+          ...(dto.category !== undefined ? { category: dto.category } : {}),
           transactionDate: nextDate,
-          monthYear: nextMonthYear,
-          budgetPeriod: nextBudgetPeriod,
+          monthYear: toMonthYear(nextDate),
           ...(dto.description !== undefined
             ? { description: dto.description }
             : {}),
@@ -199,43 +141,27 @@ export class TransactionsService {
       // Si antes era salario (y ahora cambió de fecha o dejó de serlo), su
       // período viejo se rehace o se fusiona con el anterior; si ahora es
       // salario, `assignTransactionToPeriod` abre el suyo.
+      let affectedFrom = earliestDate(existing.transactionDate, nextDate);
       if (isSalary(existing)) {
-        await this.financialPeriods.recalculatePeriodsFrom(
+        const boundary = await this.financialPeriods.recalculatePeriodsFrom(
           tx,
           userId,
-          existing.transactionDate < nextDate
-            ? existing.transactionDate
-            : nextDate,
+          affectedFrom,
         );
+        affectedFrom = earliestDate(affectedFrom, boundary);
       }
-      const period = await this.financialPeriods.assignTransactionToPeriod(
+      const assignment = await this.financialPeriods.assignTransactionToPeriod(
         tx,
         transaction,
       );
-      transaction.periodId = period.id;
+      transaction.periodId = assignment.period.id;
 
-      if (BUDGET_AFFECTING_TYPES.has(nextType)) {
-        await this.addToBudget(
-          tx,
-          userId,
-          nextMonthYear,
-          nextCategory,
-          nextAmount,
-        );
-      }
-
-      // La cascada parte del mes más antiguo entre el estado previo y el
+      // La cascada parte del período más antiguo entre el estado previo y el
       // nuevo: una edición retroactiva mueve el rollover de todo lo posterior.
-      await this.budgetRecalculation.recalculateFromMonths(
+      await this.budgetRecalculation.recalculateFrom(
         tx,
         userId,
-        [
-          existing.monthYear,
-          existing.budgetPeriod ?? existing.monthYear,
-          nextMonthYear,
-          nextBudgetPeriod,
-        ],
-        touchesIncome ? [...affectedIncomeMonths] : [],
+        earliestDate(affectedFrom, assignment.affectedFrom),
       );
 
       return transaction;
@@ -249,61 +175,21 @@ export class TransactionsService {
     const existing = await this.findOwned(id, userId);
 
     await this.prisma.$transaction(async (tx) => {
-      if (BUDGET_AFFECTING_TYPES.has(existing.type)) {
-        await this.removeFromBudget(
-          tx,
-          userId,
-          existing.monthYear,
-          existing.category,
-          existing.amount,
-        );
-      }
-
       await tx.transaction.delete({ where: { id } });
 
       // Borrar un salario fusiona su período con el anterior.
+      let affectedFrom = existing.transactionDate;
       if (isSalary(existing)) {
-        await this.financialPeriods.recalculatePeriodsFrom(
+        const boundary = await this.financialPeriods.recalculatePeriodsFrom(
           tx,
           userId,
           existing.transactionDate,
         );
+        affectedFrom = earliestDate(affectedFrom, boundary);
       }
 
-      const budgetPeriod = existing.budgetPeriod ?? existing.monthYear;
-      await this.budgetRecalculation.recalculateFromMonths(
-        tx,
-        userId,
-        [existing.monthYear, budgetPeriod],
-        existing.type === TransactionType.INCOME ? [budgetPeriod] : [],
-      );
+      await this.budgetRecalculation.recalculateFrom(tx, userId, affectedFrom);
     }, CASCADE_TRANSACTION_OPTIONS);
-  }
-
-  /**
-   * SALARY exige un `budgetPeriod` explícito (desfase de nómina); cualquier
-   * otro caso lo calcula del mes de la transacción e ignora lo que venga en
-   * el body. `fallback` es el `budgetPeriod` ya guardado, para un update que
-   * no lo reenvía pero cuyo tipo/categoría resultante sigue siendo SALARY.
-   */
-  private resolveBudgetPeriod(
-    type: TransactionType,
-    category: Category,
-    monthYear: string,
-    provided: string | undefined,
-    fallback?: string | null,
-  ): string {
-    if (type === TransactionType.INCOME && category === Category.SALARY) {
-      const value = provided ?? fallback ?? undefined;
-      if (!value) {
-        throw new BadRequestException(
-          'budgetPeriod is required for SALARY income',
-        );
-      }
-      return value;
-    }
-
-    return monthYear;
   }
 
   private async findOwned(
@@ -361,43 +247,5 @@ export class TransactionsService {
         `RecurringExpense ${recurringExpenseId} category (${expense.category}) does not match transaction category (${category})`,
       );
     }
-  }
-
-  /** Suma al presupuesto del mes/categoría, creándolo con límite 0 si no existe. */
-  private async addToBudget(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    monthYear: string,
-    category: Category,
-    amount: Prisma.Decimal,
-  ): Promise<void> {
-    await tx.budget.upsert({
-      where: { userId_monthYear_category: { userId, monthYear, category } },
-      create: {
-        userId,
-        monthYear,
-        category,
-        limitAmount: 0,
-        spentAmount: amount,
-      },
-      update: { spentAmount: { increment: amount } },
-    });
-  }
-
-  /**
-   * Resta del presupuesto del mes/categoría. Se usa `updateMany` para que sea
-   * un no-op si el presupuesto ya no existe, en vez de fallar con P2025.
-   */
-  private async removeFromBudget(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    monthYear: string,
-    category: Category,
-    amount: Prisma.Decimal,
-  ): Promise<void> {
-    await tx.budget.updateMany({
-      where: { userId, monthYear, category },
-      data: { spentAmount: { decrement: amount } },
-    });
   }
 }

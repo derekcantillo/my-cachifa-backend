@@ -27,7 +27,10 @@ export interface ITransactionResponse {
   recurringExpenseId: string | null;
   loanId: string | null;
   transactionDate: string;
+  periodId: string | null;
+  /** @deprecated Usar `periodId`. `YYYY-MM` (hora de Bogotá) de `transactionDate`. */
   monthYear: string;
+  /** @deprecated Ya no se escribe; solo refleja el histórico. */
   budgetPeriod: string | null;
   createdAt: string;
   updatedAt: string;
@@ -50,6 +53,7 @@ export function toTransactionResponse(
     recurringExpenseId: transaction.recurringExpenseId,
     loanId: transaction.loanId,
     transactionDate: transaction.transactionDate.toISOString(),
+    periodId: transaction.periodId,
     monthYear: transaction.monthYear,
     budgetPeriod: transaction.budgetPeriod,
     createdAt: transaction.createdAt.toISOString(),

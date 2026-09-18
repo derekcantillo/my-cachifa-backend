@@ -5,6 +5,10 @@ import {
   PlanPhase,
   PrismaClient,
 } from '@prisma/client';
+import {
+  formatPeriodLabel,
+  startOfFinancialDay,
+} from '../src/common/utils/period.util';
 
 if (process.env['DATABASE_URL_LOCAL']) {
   process.env['DATABASE_URL'] = process.env['DATABASE_URL_LOCAL'];
@@ -20,9 +24,6 @@ async function main(): Promise<void> {
     throw new Error('MY_WA_NUMBER env variable is required for seeding');
   }
 
-  const now = new Date();
-  const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
   // ─── User ─────────────────────────────────────────────────
   const user = await prisma.user.upsert({
     where: { waNumber },
@@ -31,6 +32,23 @@ async function main(): Promise<void> {
   });
 
   console.log(`✓ User: ${user.name} (${user.waNumber})`);
+
+  // ─── Período actual ───────────────────────────────────────
+  // Un usuario recién sembrado no tiene salarios: se abre un período de
+  // arranque desde hoy (hora de Bogotá). El primer salario lo cerrará.
+  const startDate = startOfFinancialDay(new Date());
+  const period =
+    (await prisma.financialPeriod.findFirst({
+      where: { userId: user.id, endDate: null },
+    })) ??
+    (await prisma.financialPeriod.create({
+      data: {
+        userId: user.id,
+        startDate,
+        endDate: null,
+        label: formatPeriodLabel(startDate, null),
+      },
+    }));
 
   // ─── Budgets ───────────────────────────────────────────────
   const budgets: { category: Category; limitAmount: number }[] = [
@@ -46,23 +64,23 @@ async function main(): Promise<void> {
   for (const budget of budgets) {
     await prisma.budget.upsert({
       where: {
-        userId_monthYear_category: {
+        userId_periodId_category: {
           userId: user.id,
-          monthYear,
+          periodId: period.id,
           category: budget.category,
         },
       },
       update: { limitAmount: budget.limitAmount },
       create: {
         userId: user.id,
-        monthYear,
+        periodId: period.id,
         category: budget.category,
         limitAmount: budget.limitAmount,
       },
     });
   }
 
-  console.log(`✓ Budgets seeded for ${monthYear}`);
+  console.log(`✓ Budgets seeded for ${period.label}`);
 
   // ─── Accounts ──────────────────────────────────────────────
   const accounts: { name: string; type: AccountType }[] = [

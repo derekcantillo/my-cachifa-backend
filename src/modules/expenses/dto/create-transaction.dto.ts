@@ -11,7 +11,6 @@ import {
   IsString,
   Matches,
   MaxLength,
-  ValidateIf,
 } from 'class-validator';
 import { MONTH_YEAR_MESSAGE, MONTH_YEAR_REGEX } from '@common/utils/month.util';
 
@@ -54,16 +53,10 @@ export class CreateTransactionDto {
   transactionDate?: string;
 
   /**
-   * `YYYY-MM` que este ingreso cubre. Requerido solo para INCOME + SALARY
-   * (el desfase de nómina); para cualquier otro caso se calcula del lado del
-   * servidor a partir de `transactionDate` y cualquier valor enviado aquí se
-   * ignora.
+   * @deprecated Se acepta para no romper clientes que aún lo envían, pero se
+   * ignora: el período de un salario lo define su `transactionDate`.
    */
-  @ValidateIf(
-    (dto: CreateTransactionDto) =>
-      dto.type === TransactionType.INCOME && dto.category === Category.SALARY,
-  )
-  @IsNotEmpty({ message: 'budgetPeriod is required for SALARY income' })
+  @IsOptional()
   @Matches(MONTH_YEAR_REGEX, { message: MONTH_YEAR_MESSAGE })
   budgetPeriod?: string;
 }

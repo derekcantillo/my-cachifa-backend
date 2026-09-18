@@ -5,6 +5,11 @@ export interface IMigratedPeriodResponse {
   endDate: string | null;
   anchorTxId: string | null;
   transactionCount: number;
+  openingBalance: number | null;
+  income: number | null;
+  expenses: number | null;
+  closingBalance: number | null;
+  budgetCount: number;
 }
 
 export interface IMigratePeriodsResponse {

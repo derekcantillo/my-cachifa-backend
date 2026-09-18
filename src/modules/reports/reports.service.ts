@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Category, GoalStatus, Prisma, TransactionType } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
-import { currentMonthYear } from '@common/utils/month.util';
 import { toPercentage } from '@common/utils/percentage.util';
+import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type {
   IDistributionItem,
@@ -17,37 +17,42 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
+    private readonly financialPeriods: FinancialPeriodService,
   ) {}
 
-  async getSummary(month?: string): Promise<IReportSummary> {
+  async getSummary(periodId?: string): Promise<IReportSummary> {
     const userId = await this.currentUser.getUserId();
-    const monthYear = month ?? currentMonthYear();
+    const period = await this.financialPeriods.resolvePeriod(
+      this.prisma,
+      userId,
+      periodId,
+    );
 
     const [biggestExpenseGroup, savingsSum, savingsBudget, frequentGroup] =
       await Promise.all([
         this.prisma.transaction.groupBy({
           by: ['category'],
-          where: { userId, monthYear, type: TransactionType.EXPENSE },
+          where: { userId, periodId: period.id, type: TransactionType.EXPENSE },
           _sum: { amount: true },
           orderBy: { _sum: { amount: 'desc' } },
           take: 1,
         }),
         this.prisma.transaction.aggregate({
-          where: { userId, monthYear, type: TransactionType.SAVING },
+          where: { userId, periodId: period.id, type: TransactionType.SAVING },
           _sum: { amount: true },
         }),
         this.prisma.budget.findUnique({
           where: {
-            userId_monthYear_category: {
+            userId_periodId_category: {
               userId,
-              monthYear,
+              periodId: period.id,
               category: Category.SAVING,
             },
           },
         }),
         this.prisma.transaction.groupBy({
           by: ['category'],
-          where: { userId, monthYear },
+          where: { userId, periodId: period.id },
           _count: { category: true },
           orderBy: { _count: { category: 'desc' } },
           take: 1,
@@ -82,13 +87,17 @@ export class ReportsService {
     };
   }
 
-  async getDistribution(month?: string): Promise<IDistributionItem[]> {
+  async getDistribution(periodId?: string): Promise<IDistributionItem[]> {
     const userId = await this.currentUser.getUserId();
-    const monthYear = month ?? currentMonthYear();
+    const period = await this.financialPeriods.resolvePeriod(
+      this.prisma,
+      userId,
+      periodId,
+    );
 
     const grouped = await this.prisma.transaction.groupBy({
       by: ['category'],
-      where: { userId, monthYear, type: TransactionType.EXPENSE },
+      where: { userId, periodId: period.id, type: TransactionType.EXPENSE },
       _sum: { amount: true },
       orderBy: { _sum: { amount: 'desc' } },
     });

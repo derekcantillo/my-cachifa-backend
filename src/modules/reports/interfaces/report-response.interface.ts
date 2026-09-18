@@ -26,7 +26,7 @@ export interface IReportSummary {
 export interface IDistributionItem {
   category: Category;
   amount: number;
-  /** Porcentaje sobre el total gastado (EXPENSE) del mes. */
+  /** Porcentaje sobre el total gastado (EXPENSE) del período. */
   percentage: number;
 }
 

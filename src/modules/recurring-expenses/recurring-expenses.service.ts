@@ -2,7 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type RecurringExpense } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
-import { currentMonthYear } from '@common/utils/month.util';
+import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateRecurringExpenseDto } from './dto/create-recurring-expense.dto';
 import type { UpdateRecurringExpenseDto } from './dto/update-recurring-expense.dto';
@@ -17,6 +18,7 @@ export class RecurringExpensesService {
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
     private readonly budgetRecalculation: BudgetRecalculationService,
+    private readonly financialPeriods: FinancialPeriodService,
   ) {}
 
   async findAll(): Promise<IRecurringExpenseResponse[]> {
@@ -30,16 +32,20 @@ export class RecurringExpensesService {
     return expenses.map(toRecurringExpenseResponse);
   }
 
-  /** Activos sin una `Transaction` de `month` todavía enlazada. */
-  async findPending(month?: string): Promise<IRecurringExpenseResponse[]> {
+  /** Activos sin una `Transaction` del período todavía enlazada. */
+  async findPending(periodId?: string): Promise<IRecurringExpenseResponse[]> {
     const userId = await this.currentUser.getUserId();
-    const monthYear = month ?? currentMonthYear();
+    const period = await this.financialPeriods.resolvePeriod(
+      this.prisma,
+      userId,
+      periodId,
+    );
 
     const expenses = await this.prisma.recurringExpense.findMany({
       where: {
         userId,
         active: true,
-        transactions: { none: { monthYear } },
+        transactions: { none: { periodId: period.id } },
       },
       orderBy: { dayOfMonth: 'asc' },
     });
@@ -51,7 +57,6 @@ export class RecurringExpensesService {
     dto: CreateRecurringExpenseDto,
   ): Promise<IRecurringExpenseResponse> {
     const userId = await this.currentUser.getUserId();
-    const month = currentMonthYear();
 
     const created = await this.prisma.$transaction(async (tx) => {
       const expense = await tx.recurringExpense.create({
@@ -66,10 +71,10 @@ export class RecurringExpensesService {
         },
       });
 
-      await this.budgetRecalculation.recalculateBudgets(tx, userId, month);
+      await this.budgetRecalculation.recalculateCurrentPeriod(tx, userId);
 
       return expense;
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toRecurringExpenseResponse(created);
   }
@@ -80,7 +85,6 @@ export class RecurringExpensesService {
   ): Promise<IRecurringExpenseResponse> {
     const userId = await this.currentUser.getUserId();
     await this.findOwned(id, userId);
-    const month = currentMonthYear();
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const expense = await tx.recurringExpense.update({
@@ -101,10 +105,10 @@ export class RecurringExpensesService {
         },
       });
 
-      await this.budgetRecalculation.recalculateBudgets(tx, userId, month);
+      await this.budgetRecalculation.recalculateCurrentPeriod(tx, userId);
 
       return expense;
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toRecurringExpenseResponse(updated);
   }
@@ -112,12 +116,11 @@ export class RecurringExpensesService {
   async remove(id: string): Promise<void> {
     const userId = await this.currentUser.getUserId();
     await this.findOwned(id, userId);
-    const month = currentMonthYear();
 
     await this.prisma.$transaction(async (tx) => {
       await tx.recurringExpense.delete({ where: { id } });
-      await this.budgetRecalculation.recalculateBudgets(tx, userId, month);
-    });
+      await this.budgetRecalculation.recalculateCurrentPeriod(tx, userId);
+    }, CASCADE_TRANSACTION_OPTIONS);
   }
 
   private async findOwned(

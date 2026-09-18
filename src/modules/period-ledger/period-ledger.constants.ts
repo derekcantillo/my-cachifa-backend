@@ -1,6 +1,6 @@
 /**
  * Opciones de `$transaction` para toda mutación que dispara una cascada de
- * `MonthlyLedger`: un cambio retroactivo recorre varios meses (y sus
+ * `PeriodLedger`: un cambio retroactivo recorre varios períodos (y sus
  * presupuestos) dentro de una sola transacción, y el timeout por defecto de
  * Prisma (5s) se queda corto.
  */

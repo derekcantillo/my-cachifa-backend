@@ -6,7 +6,7 @@ import { Prisma, type Budget, type Category } from '@prisma/client';
  */
 export interface IBudgetResponse {
   id: string;
-  monthYear: string;
+  periodId: string;
   category: Category;
   limitAmount: number;
   spentAmount: number;
@@ -32,7 +32,7 @@ function toPercentage(
 export function toBudgetResponse(budget: Budget): IBudgetResponse {
   return {
     id: budget.id,
-    monthYear: budget.monthYear,
+    periodId: budget.periodId,
     category: budget.category,
     limitAmount: budget.limitAmount.toNumber(),
     spentAmount: budget.spentAmount.toNumber(),
