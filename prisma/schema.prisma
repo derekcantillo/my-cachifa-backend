@@ -122,6 +122,7 @@ model User {
   recurringExpenses       RecurringExpense[]
   loans                   Loan[]
   monthlyLedgers          MonthlyLedger[]
+  financialPeriods        FinancialPeriod[]
 
   @@map("users")
 }
@@ -170,6 +171,13 @@ model Transaction {
    * a `monthYear`. Ver `IncomeCalculatorService.getEffectiveIncome`.
    */
   budgetPeriod       String?           @map("budget_period")
+  /**
+   * Período financiero (salario a salario) en cuyo rango cae
+   * `transactionDate`. Lo mantiene `FinancialPeriodService`; convive con
+   * `monthYear` mientras budgets/ledger/reports siguen usando el mes
+   * calendario.
+   */
+  periodId           String?           @map("period_id")
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime          @updatedAt @map("updated_at")
   user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -177,8 +185,10 @@ model Transaction {
   recurringExpense   RecurringExpense? @relation(fields: [recurringExpenseId], references: [id], onDelete: SetNull)
   // Un préstamo eliminable (sin repagos) se lleva su Transaction vinculada consigo.
   loan               Loan?             @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  period             FinancialPeriod?  @relation(fields: [periodId], references: [id], onDelete: SetNull)
 
   @@index([userId, monthYear])
+  @@index([periodId])
   @@index([accountId])
   @@index([recurringExpenseId])
   @@index([loanId])
@@ -355,4 +365,35 @@ model MonthlyLedger {
 
   @@unique([userId, month])
   @@map("monthly_ledgers")
+}
+
+/**
+ * Período financiero anclado por el salario: cada `Transaction` INCOME +
+ * SALARY abre uno que va desde el día (hora de Bogotá) de ese salario hasta
+ * el día anterior al siguiente. El rango es `[startDate, endDate)`:
+ * `endDate` es la medianoche en que arranca el siguiente período, así que el
+ * último día incluido es `endDate - 1 día`. `endDate = null` es el período
+ * abierto actual. Un período sin `anchorTxId` es el "de arranque" que cubre
+ * lo registrado antes del primer salario. Es un dato derivado de las
+ * transacciones: `FinancialPeriodService.recalculatePeriodsFrom` lo
+ * reconstruye.
+ */
+model FinancialPeriod {
+  id           String        @id @default(cuid())
+  userId       String        @map("user_id")
+  label        String
+  startDate    DateTime      @map("start_date")
+  endDate      DateTime?     @map("end_date")
+  /**
+   * `Transaction` SALARY que abrió el período. Sin FK a propósito: al borrar
+   * ese salario, el servicio fusiona el período con el anterior.
+   */
+  anchorTxId   String?       @map("anchor_tx_id")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, startDate])
+  @@map("financial_periods")
 }

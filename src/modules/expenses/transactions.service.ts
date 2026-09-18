@@ -7,6 +7,10 @@ import { Category, Prisma, TransactionType } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { currentMonthYear, toMonthYear } from '@common/utils/month.util';
+import {
+  FinancialPeriodService,
+  isSalary,
+} from '@modules/financial-periods/financial-period.service';
 import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateTransactionDto } from './dto/create-transaction.dto';
@@ -29,6 +33,7 @@ export class TransactionsService {
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
     private readonly budgetRecalculation: BudgetRecalculationService,
+    private readonly financialPeriods: FinancialPeriodService,
   ) {}
 
   async findAll(month?: string): Promise<ITransactionResponse[]> {
@@ -91,6 +96,14 @@ export class TransactionsService {
         },
         include: { account: true },
       });
+
+      // Un salario abre su período y cierra el anterior; cualquier otra
+      // transacción solo cae en el período que cubre su fecha.
+      const period = await this.financialPeriods.assignTransactionToPeriod(
+        tx,
+        transaction,
+      );
+      transaction.periodId = period.id;
 
       if (BUDGET_AFFECTING_TYPES.has(dto.type)) {
         await this.addToBudget(tx, userId, monthYear, dto.category, amount);
@@ -183,6 +196,24 @@ export class TransactionsService {
         include: { account: true },
       });
 
+      // Si antes era salario (y ahora cambió de fecha o dejó de serlo), su
+      // período viejo se rehace o se fusiona con el anterior; si ahora es
+      // salario, `assignTransactionToPeriod` abre el suyo.
+      if (isSalary(existing)) {
+        await this.financialPeriods.recalculatePeriodsFrom(
+          tx,
+          userId,
+          existing.transactionDate < nextDate
+            ? existing.transactionDate
+            : nextDate,
+        );
+      }
+      const period = await this.financialPeriods.assignTransactionToPeriod(
+        tx,
+        transaction,
+      );
+      transaction.periodId = period.id;
+
       if (BUDGET_AFFECTING_TYPES.has(nextType)) {
         await this.addToBudget(
           tx,
@@ -229,6 +260,15 @@ export class TransactionsService {
       }
 
       await tx.transaction.delete({ where: { id } });
+
+      // Borrar un salario fusiona su período con el anterior.
+      if (isSalary(existing)) {
+        await this.financialPeriods.recalculatePeriodsFrom(
+          tx,
+          userId,
+          existing.transactionDate,
+        );
+      }
 
       const budgetPeriod = existing.budgetPeriod ?? existing.monthYear;
       await this.budgetRecalculation.recalculateFromMonths(

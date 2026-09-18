@@ -6,6 +6,7 @@ import {
 import { Category, LoanStatus, Prisma, TransactionType } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { toMonthYear } from '@common/utils/month.util';
+import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateLoanDto } from './dto/create-loan.dto';
 import type { CreateLoanRepaymentDto } from './dto/create-loan-repayment.dto';
@@ -27,6 +28,7 @@ export class LoansService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
+    private readonly financialPeriods: FinancialPeriodService,
   ) {}
 
   async findAll(): Promise<ILoanResponse[]> {
@@ -69,7 +71,7 @@ export class LoansService {
       // No pasa por `TransactionsService`: `LOAN_GIVEN` no consume
       // presupuesto ni cuenta como ingreso, así que no hay nada de esa
       // lógica que reutilizar — solo el registro del movimiento en sí.
-      await tx.transaction.create({
+      const transaction = await tx.transaction.create({
         data: {
           userId,
           accountId,
@@ -83,6 +85,7 @@ export class LoansService {
           monthYear: toMonthYear(loanDate),
         },
       });
+      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
 
       return loan;
     });
@@ -145,7 +148,7 @@ export class LoansService {
         data: { loanId: id, amount, paidAt, note: dto.note ?? null },
       });
 
-      await tx.transaction.create({
+      const transaction = await tx.transaction.create({
         data: {
           userId,
           accountId: loan.accountId,
@@ -159,6 +162,7 @@ export class LoansService {
           monthYear: toMonthYear(paidAt),
         },
       });
+      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
 
       return tx.loan.update({
         where: { id },

@@ -8,6 +8,7 @@ import configuration from '@config/configuration';
 import { CommonModule } from '@common/common.module';
 import { PrismaModule } from '@modules/prisma/prisma.module';
 import { AccountsModule } from '@modules/accounts/accounts.module';
+import { AdminModule } from '@modules/admin/admin.module';
 import { AlertsModule } from '@modules/alerts/alerts.module';
 import { AiModule } from '@modules/ai/ai.module';
 import { BudgetRulesModule } from '@modules/budget-rules/budget-rules.module';
@@ -60,6 +61,7 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
     PrismaModule,
     CommonModule,
     AccountsModule,
+    AdminModule,
     AlertsModule,
     AiModule,
     BudgetRulesModule,
