@@ -3,13 +3,19 @@ services:
     image: postgres:16-alpine
     container_name: cachifa_db
     restart: always
+    ports:
+      - '127.0.0.1:5432:5432'
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - '5432:5432'
+    # No `ports:` on purpose — Postgres is only reachable from the compose
+    # network (the app container). Nothing on the laptop's LAN can touch it.
+    # Use `docker compose -f docker-compose.prod.yml exec postgres psql ...`
+    # for maintenance instead of exposing 5432.
     volumes:
+      # Named volume, NOT a bind mount: the data does not depend on any path of
+      # this machine, so migrating to a VPS is dump → restore (see DEPLOY.md).
       - cachifa_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
@@ -29,8 +35,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Bound to loopback: public traffic arrives through cloudflared, never
+    # straight off the laptop's network interface. Keeps `curl localhost:3000`
+    # working for local debugging.
     ports:
-      - '3000:3000'
+      - '127.0.0.1:3000:3000'
     env_file: .env
     healthcheck:
       # /api/v1/health is the only unauthenticated endpoint, so no API key here.
@@ -43,6 +52,23 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    networks:
+      - cachifa_network
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cachifa_tunnel
+    restart: always
+    # `tunnel run` with a token: all the routing lives in the Cloudflare
+    # dashboard, so there is no credentials file to carry between machines.
+    # The public hostname must point to http://app:3000 (service name on this
+    # network), not to localhost.
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      app:
+        condition: service_healthy
     networks:
       - cachifa_network
 
