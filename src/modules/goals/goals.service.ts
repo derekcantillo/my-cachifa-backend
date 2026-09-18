@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { GoalStatus, Prisma } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
+import { toMonthYear } from '@common/utils/month.util';
+import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateContributionDto } from './dto/create-contribution.dto';
 import type { CreateGoalDto } from './dto/create-goal.dto';
@@ -20,6 +23,7 @@ export class GoalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
+    private readonly budgetRecalculation: BudgetRecalculationService,
   ) {}
 
   async findAll(): Promise<IGoalResponse[]> {
@@ -86,8 +90,22 @@ export class GoalsService {
 
   async remove(id: string): Promise<void> {
     const userId = await this.currentUser.getUserId();
-    await this.findOwned(id, userId);
-    await this.prisma.goal.delete({ where: { id } });
+    const goal = await this.findOwned(id, userId);
+
+    // Borrar la meta se lleva sus aportes (FK en cascada): los meses en que
+    // se aportó recuperan ese dinero como disponible.
+    const contributionMonths = goal.contributions.map((contribution) =>
+      toMonthYear(contribution.contributedAt),
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.goal.delete({ where: { id } });
+      await this.budgetRecalculation.recalculateFromMonths(
+        tx,
+        userId,
+        contributionMonths,
+      );
+    }, CASCADE_TRANSACTION_OPTIONS);
   }
 
   async addContribution(
@@ -111,7 +129,7 @@ export class GoalsService {
         data: { goalId: id, amount, note: dto.note ?? null, contributedAt },
       });
 
-      return tx.goal.update({
+      const goalAfter = await tx.goal.update({
         where: { id },
         data: {
           currentAmount: { increment: amount },
@@ -119,7 +137,13 @@ export class GoalsService {
         },
         include: CONTRIBUTIONS_DESC,
       });
-    });
+
+      await this.budgetRecalculation.recalculateFromMonths(tx, userId, [
+        toMonthYear(contributedAt),
+      ]);
+
+      return goalAfter;
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toGoalResponse(updated);
   }

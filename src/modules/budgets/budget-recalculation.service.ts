@@ -9,7 +9,7 @@ import {
 import { AlertsService } from '@modules/alerts/alerts.service';
 import { formatCOP } from '@common/utils/currency.util';
 import { monthsBetween, toMonthYearUTC } from '@common/utils/month.util';
-import { IncomeCalculatorService } from './income-calculator.service';
+import { MonthlyLedgerService } from '@modules/monthly-ledger/monthly-ledger.service';
 
 /** Piso de meses restantes para una meta, evita dividir por cero cuando el mes objetivo ya llegó o pasó. */
 const MIN_MONTHS_REMAINING = 1;
@@ -17,12 +17,49 @@ const MIN_MONTHS_REMAINING = 1;
 @Injectable()
 export class BudgetRecalculationService {
   constructor(
-    private readonly incomeCalculator: IncomeCalculatorService,
+    private readonly monthlyLedger: MonthlyLedgerService,
     private readonly alerts: AlertsService,
   ) {}
 
   /**
-   * a. Ingreso efectivo del mes.
+   * Punto de entrada tras cualquier mutación que mueva dinero del mes:
+   * recalcula en cascada los `MonthlyLedger` desde el mes más antiguo
+   * afectado y luego los presupuestos de los meses cuyo ingreso base pudo
+   * cambiar — `budgetMonths` (los que la mutación toca en ingreso) más todo
+   * mes posterior a ese punto de partida, porque su `openingBalance` (el
+   * rollover) acaba de recalcularse.
+   */
+  async recalculateFromMonths(
+    client: Prisma.TransactionClient,
+    userId: string,
+    affectedMonths: readonly string[],
+    budgetMonths: readonly string[] = [],
+  ): Promise<void> {
+    const sorted = [...new Set(affectedMonths)].sort();
+    const fromMonth = sorted[0];
+    const throughMonth = sorted[sorted.length - 1];
+    if (!fromMonth || !throughMonth) return;
+
+    const ledgers = await this.monthlyLedger.recalculateLedgerCascade(
+      client,
+      userId,
+      fromMonth,
+      throughMonth,
+    );
+
+    const months = new Set(budgetMonths);
+    for (const ledger of ledgers) {
+      if (ledger.month > fromMonth) months.add(ledger.month);
+    }
+
+    for (const month of [...months].sort()) {
+      await this.recalculateBudgets(client, userId, month);
+    }
+  }
+
+  /**
+   * a. Ingreso base del mes = `openingBalance` (rollover del mes anterior) +
+   *    ingreso efectivo, ambos tomados del `MonthlyLedger`.
    * b-c. Se le restan los compromisos fijos (`RecurringExpense` activos) ->
    *      ingreso disponible; puede quedar negativo a propósito, para que la
    *      UI pueda alertar que los fijos ya superan el ingreso.
@@ -38,20 +75,21 @@ export class BudgetRecalculationService {
     userId: string,
     month: string,
   ): Promise<void> {
-    const [effectiveIncome, recurringExpenses, rules, goals, user] =
-      await Promise.all([
-        this.incomeCalculator.getEffectiveIncome(client, userId, month),
-        client.recurringExpense.findMany({ where: { userId, active: true } }),
-        client.budgetRule.findMany({ where: { userId } }),
-        client.goal.findMany({ where: { userId, status: GoalStatus.ACTIVE } }),
-        client.user.findUniqueOrThrow({ where: { id: userId } }),
-      ]);
+    const [ledger, recurringExpenses, rules, goals, user] = await Promise.all([
+      this.monthlyLedger.getOrBuildLedger(client, userId, month),
+      client.recurringExpense.findMany({ where: { userId, active: true } }),
+      client.budgetRule.findMany({ where: { userId } }),
+      client.goal.findMany({ where: { userId, status: GoalStatus.ACTIVE } }),
+      client.user.findUniqueOrThrow({ where: { id: userId } }),
+    ]);
 
     const fixedCommitments = recurringExpenses.reduce(
       (sum, expense) => sum.plus(expense.estimatedAmount),
       new Prisma.Decimal(0),
     );
-    const discretionaryIncome = effectiveIncome.minus(fixedCommitments);
+    const discretionaryIncome = ledger.openingBalance
+      .plus(ledger.income)
+      .minus(fixedCommitments);
     const fixedCategories = new Set(
       recurringExpenses.map((expense) => expense.category),
     );

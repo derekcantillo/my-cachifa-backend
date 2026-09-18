@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { currentMonthYear } from '@common/utils/month.util';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { BudgetRecalculationService } from './budget-recalculation.service';
 import type { UpsertBudgetsDto } from './dto/upsert-budgets.dto';
@@ -55,12 +56,23 @@ export class BudgetsService {
     return this.listMonth(userId, monthYear);
   }
 
-  /** Reaplica las `BudgetRule` del usuario al mes dado, bajo demanda. */
+  /**
+   * Reaplica las `BudgetRule` del usuario al mes dado, bajo demanda —
+   * refrescando antes su `MonthlyLedger` (y en cascada los meses siguientes)
+   * para que el ingreso base incluya el rollover al día.
+   */
   async recalculate(month: string): Promise<IBudgetResponse[]> {
     const userId = await this.currentUser.getUserId();
 
-    await this.prisma.$transaction((tx) =>
-      this.budgetRecalculation.recalculateBudgets(tx, userId, month),
+    await this.prisma.$transaction(
+      (tx) =>
+        this.budgetRecalculation.recalculateFromMonths(
+          tx,
+          userId,
+          [month],
+          [month],
+        ),
+      CASCADE_TRANSACTION_OPTIONS,
     );
 
     return this.listMonth(userId, month);

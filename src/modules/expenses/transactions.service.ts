@@ -7,6 +7,7 @@ import { Category, Prisma, TransactionType } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { currentMonthYear, toMonthYear } from '@common/utils/month.util';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/monthly-ledger/monthly-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateTransactionDto } from './dto/create-transaction.dto';
 import type { UpdateTransactionDto } from './dto/update-transaction.dto';
@@ -95,16 +96,17 @@ export class TransactionsService {
         await this.addToBudget(tx, userId, monthYear, dto.category, amount);
       }
 
-      if (dto.type === TransactionType.INCOME) {
-        await this.budgetRecalculation.recalculateBudgets(
-          tx,
-          userId,
-          budgetPeriod,
-        );
-      }
+      // Un salario pagado en agosto que cubre septiembre arranca la cascada
+      // en agosto (el más antiguo de los dos) y llega al menos a septiembre.
+      await this.budgetRecalculation.recalculateFromMonths(
+        tx,
+        userId,
+        [monthYear, budgetPeriod],
+        dto.type === TransactionType.INCOME ? [budgetPeriod] : [],
+      );
 
       return transaction;
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toTransactionResponse(created);
   }
@@ -191,14 +193,22 @@ export class TransactionsService {
         );
       }
 
-      if (touchesIncome) {
-        for (const month of affectedIncomeMonths) {
-          await this.budgetRecalculation.recalculateBudgets(tx, userId, month);
-        }
-      }
+      // La cascada parte del mes más antiguo entre el estado previo y el
+      // nuevo: una edición retroactiva mueve el rollover de todo lo posterior.
+      await this.budgetRecalculation.recalculateFromMonths(
+        tx,
+        userId,
+        [
+          existing.monthYear,
+          existing.budgetPeriod ?? existing.monthYear,
+          nextMonthYear,
+          nextBudgetPeriod,
+        ],
+        touchesIncome ? [...affectedIncomeMonths] : [],
+      );
 
       return transaction;
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toTransactionResponse(updated);
   }
@@ -220,14 +230,14 @@ export class TransactionsService {
 
       await tx.transaction.delete({ where: { id } });
 
-      if (existing.type === TransactionType.INCOME && existing.budgetPeriod) {
-        await this.budgetRecalculation.recalculateBudgets(
-          tx,
-          userId,
-          existing.budgetPeriod,
-        );
-      }
-    });
+      const budgetPeriod = existing.budgetPeriod ?? existing.monthYear;
+      await this.budgetRecalculation.recalculateFromMonths(
+        tx,
+        userId,
+        [existing.monthYear, budgetPeriod],
+        existing.type === TransactionType.INCOME ? [budgetPeriod] : [],
+      );
+    }, CASCADE_TRANSACTION_OPTIONS);
   }
 
   /**

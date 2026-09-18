@@ -81,6 +81,15 @@ export class AccountsService {
     );
   }
 
+  /** Suma de `currentBalance` de todas las cuentas del usuario. */
+  async getTotalBalance(userId: string): Promise<Prisma.Decimal> {
+    const accounts = await this.prisma.account.findMany({ where: { userId } });
+    const balances = await Promise.all(
+      accounts.map((account) => this.computeCurrentBalance(account)),
+    );
+    return balances.reduce((sum, balance) => sum.plus(balance), ZERO);
+  }
+
   private async findOwned(id: string, userId: string): Promise<Account> {
     const account = await this.prisma.account.findFirst({
       where: { id, userId },

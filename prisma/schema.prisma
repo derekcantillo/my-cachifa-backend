@@ -121,6 +121,7 @@ model User {
   accounts                Account[]
   recurringExpenses       RecurringExpense[]
   loans                   Loan[]
+  monthlyLedgers          MonthlyLedger[]
 
   @@map("users")
 }
@@ -327,4 +328,31 @@ model LoanRepayment {
 
   @@index([loanId])
   @@map("loan_repayments")
+}
+
+/**
+ * Saldo rodante mes a mes (estilo YNAB): lo que sobra de un mes pasa a ser
+ * `openingBalance` del siguiente. Es un dato derivado — la fuente de verdad
+ * siguen siendo `Transaction` y `GoalContribution` — que
+ * `MonthlyLedgerService.recalculateLedgerCascade` mantiene al día.
+ * closingBalance = openingBalance + income - expenses - savings
+ */
+model MonthlyLedger {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  /**
+   * `YYYY-MM`.
+   */
+  month          String
+  openingBalance Decimal  @default(0) @map("opening_balance") @db.Decimal(14, 2)
+  income         Decimal  @default(0) @db.Decimal(14, 2)
+  expenses       Decimal  @default(0) @db.Decimal(14, 2)
+  savings        Decimal  @default(0) @db.Decimal(14, 2)
+  closingBalance Decimal  @default(0) @map("closing_balance") @db.Decimal(14, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+  @@map("monthly_ledgers")
 }

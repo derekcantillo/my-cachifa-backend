@@ -37,3 +37,25 @@ export function toMonthYearUTC(date: Date): string {
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
 }
+
+/** `month` desplazado `delta` meses: `shiftMonth('2026-12', 1)` -> `'2027-01'`. */
+export function shiftMonth(month: string, delta: number): string {
+  const [year = 0, monthIndex = 1] = month.split('-').map(Number);
+  const total = year * 12 + (monthIndex - 1) + delta;
+  const nextYear = Math.floor(total / 12);
+  const nextMonth = String((total % 12) + 1).padStart(2, '0');
+  return `${nextYear}-${nextMonth}`;
+}
+
+/**
+ * Límites `[start, end)` de un `YYYY-MM` en hora local del servidor — la
+ * misma convención que `toMonthYear`, para que un rango de fechas y un
+ * `monthYear` derivado con ella coincidan.
+ */
+export function monthBounds(month: string): { start: Date; end: Date } {
+  const [year = 0, monthIndex = 1] = month.split('-').map(Number);
+  return {
+    start: new Date(year, monthIndex - 1, 1),
+    end: new Date(year, monthIndex, 1),
+  };
+}
