@@ -50,6 +50,9 @@ enum Category {
   SALARY
   CONTINGENCY
   LOAN
+  EDUCATION
+  TAXES
+  PERSONAL
   OTHER
 }
 

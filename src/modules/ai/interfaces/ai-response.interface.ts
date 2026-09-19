@@ -15,6 +15,9 @@ export type ExpenseCategory =
   | 'SAVING'
   | 'VEHICLE'
   | 'HEALTH'
+  | 'EDUCATION'
+  | 'TAXES'
+  | 'PERSONAL'
   | 'OTHER';
 
 export interface IClassifiedMessage {
