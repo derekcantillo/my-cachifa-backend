@@ -4,6 +4,7 @@ import {
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
+import { CORS_OPTIONS } from './config/cors.config';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppValidationPipe } from './common/pipes/validation.pipe';
@@ -23,7 +24,7 @@ async function bootstrap(): Promise<void> {
     },
   );
 
-  app.enableCors();
+  app.enableCors(CORS_OPTIONS);
   app.setGlobalPrefix('api/v1', { exclude: ['webhook', 'webhook/(.*)'] });
   app.useGlobalPipes(new AppValidationPipe());
   app.useGlobalFilters(new HttpExceptionFilter());
