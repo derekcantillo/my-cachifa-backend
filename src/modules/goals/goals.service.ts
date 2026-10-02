@@ -35,7 +35,8 @@ export class GoalsService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return goals.map(toGoalResponse);
+    const now = new Date();
+    return goals.map((goal) => toGoalResponse(goal, now));
   }
 
   async findOne(id: string): Promise<IGoalResponse> {

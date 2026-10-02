@@ -11,18 +11,11 @@ import {
 } from '@prisma/client';
 import { AlertsService } from '@modules/alerts/alerts.service';
 import { formatCOP } from '@common/utils/currency.util';
-import {
-  monthsBetween,
-  toMonthYear,
-  toMonthYearUTC,
-} from '@common/utils/month.util';
 import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
+import { calculateGoalPlan } from '@modules/goals/lib/goal-plan';
 import { PeriodLedgerService } from '@modules/period-ledger/period-ledger.service';
 
 const ZERO = new Prisma.Decimal(0);
-
-/** Piso de meses restantes para una meta, evita dividir por cero cuando el mes objetivo ya llegó o pasó. */
-const MIN_MONTHS_REMAINING = 1;
 
 /** Solo estos tipos consumen presupuesto. */
 const BUDGET_AFFECTING_TYPES: TransactionType[] = [
@@ -225,17 +218,15 @@ export class BudgetRecalculationService {
     goals: readonly Goal[],
     targetSavingsPercentage: Prisma.Decimal,
   ): Promise<void> {
-    const periodMonth = toMonthYear(period.startDate);
+    // El monto sale de `calculateGoalPlan` —la misma función que alimenta el
+    // campo `plan` de la API— para que la alerta y la app muestren la misma
+    // cifra. Las metas no activas ya quedaron fuera de la consulta.
+    const now = new Date();
     const requiredContribution = goals.reduce((total, goal) => {
-      const remaining = goal.targetAmount.minus(goal.currentAmount);
-      if (remaining.lessThanOrEqualTo(0)) return total;
+      const plan = calculateGoalPlan(goal, now);
+      if (!plan) return total;
 
-      const monthsRemaining = Math.max(
-        MIN_MONTHS_REMAINING,
-        monthsBetween(periodMonth, toMonthYearUTC(goal.targetDate)),
-      );
-
-      return total.plus(remaining.div(monthsRemaining));
+      return total.plus(plan.requiredMonthlyContribution);
     }, ZERO);
 
     if (requiredContribution.lessThanOrEqualTo(0)) return;

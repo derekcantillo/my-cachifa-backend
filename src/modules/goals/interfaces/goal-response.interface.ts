@@ -5,6 +5,7 @@ import type {
   PlanPhase,
 } from '@prisma/client';
 import { toPercentage } from '@common/utils/percentage.util';
+import { calculateGoalPlan, type IGoalPlan } from '../lib/goal-plan';
 
 export type GoalWithContributions = Goal & {
   contributions: GoalContribution[];
@@ -32,6 +33,11 @@ export interface IGoalResponse {
   targetDate: string;
   phase: PlanPhase;
   status: GoalStatus;
+  /**
+   * Aporte mensual que exige la meta, calculado al leer por
+   * `calculateGoalPlan`. `null` si la meta no está `ACTIVE`.
+   */
+  plan: IGoalPlan | null;
   contributions: IGoalContributionResponse[];
   createdAt: string;
   updatedAt: string;
@@ -49,7 +55,10 @@ function toContributionResponse(
   };
 }
 
-export function toGoalResponse(goal: GoalWithContributions): IGoalResponse {
+export function toGoalResponse(
+  goal: GoalWithContributions,
+  now: Date = new Date(),
+): IGoalResponse {
   return {
     id: goal.id,
     name: goal.name,
@@ -59,6 +68,7 @@ export function toGoalResponse(goal: GoalWithContributions): IGoalResponse {
     targetDate: goal.targetDate.toISOString(),
     phase: goal.phase,
     status: goal.status,
+    plan: calculateGoalPlan(goal, now),
     contributions: goal.contributions.map(toContributionResponse),
     createdAt: goal.createdAt.toISOString(),
     updatedAt: goal.updatedAt.toISOString(),
