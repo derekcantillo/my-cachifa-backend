@@ -35,10 +35,36 @@ describe('calculateGoalPlan', () => {
       });
     });
 
-    it('cuenta 5 meses del 1 de octubre al 1 de marzo', () => {
+    it('no cambia la cifra de un día a otro dentro del mismo mes', () => {
+      // Regresión: con el ajuste por día del mes, el 2 de octubre caía a 2
+      // meses y el aporte saltaba de 1.000.000 a 1.500.000 de un día al otro.
+      const plans = ['2026-10-01', '2026-10-02', '2026-10-31'].map((day) =>
+        calculateGoalPlan(
+          goal({ targetDate: new Date('2027-01-01') }),
+          bogotaNoon(day),
+        ),
+      );
+
+      for (const plan of plans) {
+        expect(plan?.monthsRemaining).toBe(3);
+        expect(plan?.requiredMonthlyContribution).toBe(1_000_000);
+      }
+    });
+
+    it('baja a 2 meses al entrar noviembre', () => {
+      const plan = calculateGoalPlan(
+        goal({ targetDate: new Date('2027-01-01') }),
+        bogotaNoon('2026-11-01'),
+      );
+
+      expect(plan?.monthsRemaining).toBe(2);
+      expect(plan?.requiredMonthlyContribution).toBe(1_500_000);
+    });
+
+    it('cuenta 5 meses del 2 de octubre al 1 de marzo', () => {
       const plan = calculateGoalPlan(
         goal({ targetDate: new Date('2027-03-01') }),
-        bogotaNoon('2026-10-01'),
+        bogotaNoon('2026-10-02'),
       );
 
       expect(plan?.monthsRemaining).toBe(5);
@@ -50,12 +76,11 @@ describe('calculateGoalPlan', () => {
         bogotaNoon('2026-11-20'),
       );
 
-      // 2026-11-20 → 2028-02-15: 15 meses de calendario, menos 1 porque el
-      // día 15 del mes objetivo es anterior al día 20 de hoy.
-      expect(plan?.monthsRemaining).toBe(14);
+      // nov 2026 → feb 2028 = 15 meses de calendario; el día del mes no entra.
+      expect(plan?.monthsRemaining).toBe(15);
     });
 
-    it('descuenta el mes incompleto: 31 de enero al 28 de febrero es 1 mes', () => {
+    it('cuenta 1 mes del 31 de enero al 28 de febrero', () => {
       const plan = calculateGoalPlan(
         goal({ targetDate: new Date('2027-02-28') }),
         bogotaNoon('2027-01-31'),
@@ -79,8 +104,8 @@ describe('calculateGoalPlan', () => {
 
     it('el mismo día del objetivo da 1 mes y no está vencida', () => {
       const plan = calculateGoalPlan(
-        goal({ targetDate: new Date('2026-10-01') }),
-        bogotaNoon('2026-10-01'),
+        goal({ targetDate: new Date('2026-10-15') }),
+        bogotaNoon('2026-10-15'),
       );
 
       expect(plan).toEqual({
@@ -92,14 +117,14 @@ describe('calculateGoalPlan', () => {
 
     it('lee el día de hoy en hora de Bogotá, no en UTC', () => {
       // 04:30Z del 1 de octubre todavía es el 30 de septiembre en Bogotá: al
-      // 30 de diciembre le faltan 3 meses completos (sep 30 → dic 30). Leído
-      // en UTC el hoy sería el 1 de octubre y darían solo 2.
+      // 1 de enero le faltan 4 meses (sep → ene). Leído en UTC el hoy sería
+      // octubre y darían 3.
       const plan = calculateGoalPlan(
-        goal({ targetDate: new Date('2026-12-30') }),
+        goal({ targetDate: new Date('2027-01-01') }),
         new Date('2026-10-01T04:30:00Z'),
       );
 
-      expect(plan?.monthsRemaining).toBe(3);
+      expect(plan?.monthsRemaining).toBe(4);
     });
   });
 
@@ -122,13 +147,17 @@ describe('calculateGoalPlan', () => {
 
     it('no marca como vencida una meta cuyo objetivo es hoy en Bogotá', () => {
       // 2026-10-01T02:00:00Z = 30 sep 21:00 en Bogotá: el objetivo del 30 de
-      // septiembre es hoy, no ayer.
+      // septiembre es hoy, no ayer, y cae en el mes en curso (piso de 1).
       const plan = calculateGoalPlan(
         goal({ targetDate: new Date('2026-09-30') }),
         new Date('2026-10-01T02:00:00Z'),
       );
 
-      expect(plan?.isOverdue).toBe(false);
+      expect(plan).toEqual({
+        monthsRemaining: 1,
+        requiredMonthlyContribution: 3_000_000,
+        isOverdue: false,
+      });
     });
   });
 

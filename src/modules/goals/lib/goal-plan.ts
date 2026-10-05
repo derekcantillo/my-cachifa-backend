@@ -13,7 +13,10 @@ interface CalendarDate {
  * siempre refleja el día en que se consulta.
  */
 export interface IGoalPlan {
-  /** Meses completos que faltan para la fecha objetivo. Mínimo 1; 0 si ya venció. */
+  /**
+   * Meses de calendario que faltan para la fecha objetivo, contados de mes a
+   * mes. Mínimo 1; 0 si ya venció.
+   */
   monthsRemaining: number;
   /** `ceil(restante / monthsRemaining)`, en unidades enteras de moneda. */
   requiredMonthlyContribution: number;
@@ -60,9 +63,14 @@ function compareCalendarDates(a: CalendarDate, b: CalendarDate): number {
  * - `restante = max(0, targetAmount − currentAmount)`.
  * - Metas que no están `ACTIVE` no tienen plan.
  * - Vencida: el restante se exige completo, en un solo aporte.
- * - Si no: meses completos hasta el objetivo (descontando uno si el día del
- *   mes objetivo aún no llegó), con piso de 1, y el aporte se redondea hacia
- *   arriba para que la suma de los aportes nunca quede corta.
+ * - Si no: meses de calendario de mes a mes, con piso de 1, y el aporte se
+ *   redondea hacia arriba para que la suma nunca quede corta.
+ *
+ * Los meses se cuentan **sin mirar el día del mes** a propósito. Descontar un
+ * mes incompleto hacía que la cifra saltara de un día al siguiente dentro del
+ * mismo mes (del 1 al 2 de octubre, con objetivo el 1 de enero, el aporte
+ * pasaba de 3.333.334 a 5.000.000). Así el número solo cambia al entrar un
+ * mes nuevo, que es lo que el usuario espera de un "aporte mensual".
  */
 export function calculateGoalPlan(
   goal: GoalPlanInput,
@@ -86,11 +94,9 @@ export function calculateGoalPlan(
     };
   }
 
-  const wholeMonths =
-    (target.year - today.year) * 12 +
-    (target.month - today.month) -
-    (target.day < today.day ? 1 : 0);
-  const monthsRemaining = Math.max(MIN_MONTHS_REMAINING, wholeMonths);
+  const calendarMonths =
+    (target.year - today.year) * 12 + (target.month - today.month);
+  const monthsRemaining = Math.max(MIN_MONTHS_REMAINING, calendarMonths);
 
   return {
     monthsRemaining,
