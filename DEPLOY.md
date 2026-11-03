@@ -10,13 +10,14 @@ contenedor `postgres` trae `pg_dump`/`pg_restore`.
 
 ## 1. Arquitectura
 
-Tres servicios en `docker-compose.prod.yml`, todos en la red `cachifa_network`:
+Cuatro servicios en `docker-compose.prod.yml`, todos en la red `cachifa_network`:
 
 | Servicio      | Imagen                          | Puerto en el host        | Rol |
 | ------------- | ------------------------------- | ------------------------ | --- |
 | `postgres`    | `postgres:16-alpine`            | **ninguno** (solo la red interna) | Datos, en el volumen nombrado `cachifa_postgres_data` |
 | `app`         | build local `cachifa-backend:prod` | `127.0.0.1:3000` (solo loopback, para depurar) | API NestJS + cron de gastos fijos |
 | `cloudflared` | `cloudflare/cloudflared:latest` | ninguno                  | Túnel saliente hacia Cloudflare; publica el dominio |
+| `backup`      | build local `cachifa-backup:prod` (`backup/`) | ninguno | Dump diario cifrado hacia B2/Drive con rclone (§5) |
 
 Detalles que importan:
 
@@ -193,30 +194,172 @@ docker compose -f docker-compose.prod.yml exec app pnpm prisma migrate deploy
 
 ---
 
-## 5. Backup manual
+## 5. Backups
 
-Esta es **la única copia de los datos financieros reales** mientras todo corre
-en un solo equipo, sin réplica ni snapshots. Si el disco de la laptop falla, no
-hay de dónde recuperar. Hacer el dump y **sacarlo de la laptop** es obligatorio,
-no opcional.
+Esta es **la única copia de los datos financieros reales**. El servicio `backup`
+hace un dump diario, lo verifica, lo **cifra** y lo sube fuera del equipo. Lo
+mismo funciona igual en la laptop o en un VPS: solo depende de Docker y de un
+archivo `rclone.conf` en el host.
 
-### 5.1 Crear el dump
+### 5.1 Cómo funciona
+
+| Qué | Cómo |
+| --- | ---- |
+| Cuándo | Todos los días a las **03:00 America/Bogota** (`BACKUP_TIME`). Si a esa hora la laptop estaba dormida o apagada, corre en cuanto el contenedor vuelva a estar arriba ese mismo día. Nunca más de una vez al día. |
+| Qué hace | `pg_dump --clean --if-exists` de `cachifa_db`, comprimido con gzip. |
+| Verificación | `gzip -t`, archivo no vacío, la marca `PostgreSQL database dump complete` al final del dump, y que el tamaño en el remoto coincida tras la subida. |
+| Dónde | Local: volumen `cachifa_backups` (últimos **7**). Remoto: `daily/` (**7**), `weekly/` los domingos (**4**), `monthly/` el día 1 (**6**). |
+| Cifrado | El remoto es de tipo **`crypt`** de rclone sobre Backblaze B2 o Google Drive: nombres y contenido van cifrados, el proveedor solo ve basura. |
+| Si falla | Error en los logs y hasta **3 reintentos, una hora entre cada uno**. Si los 4 intentos fallan, vuelve a intentarlo al día siguiente. |
+| Estado | `/status/last_backup.json` (volumen `cachifa_backup_status`): fecha, archivo, tamaño, resultado, error y la fecha del último backup correcto. |
+
+El código está en `backup/` (`Dockerfile` + `backup.sh`). La config de rclone
+**nunca** va dentro de la imagen ni del repo: se monta en solo lectura desde
+`~/.config/cachifa-backup/` del host (`BACKUP_RCLONE_CONFIG_DIR` para cambiarla).
+
+### 5.2 Configurar rclone (una sola vez)
+
+> ⚠️ **La contraseña del remoto `crypt` (y su *salt*, `password2`) es lo único
+> que permite leer los backups.** Si se pierde, todos los backups quedan
+> **ilegibles para siempre**: ni Backblaze ni Google pueden recuperarlos.
+> Guárdala en un **gestor de contraseñas** en el momento de crearla, junto con
+> una copia completa del `rclone.conf`. Sin eso no hay backup.
+
+Se configura con la misma imagen del servicio, así que no hace falta instalar
+rclone en el host. Primero construye la imagen y crea la carpeta:
 
 ```bash
 cd /ruta/al/repo/my-cachifa-backend
-
-docker compose -f docker-compose.prod.yml exec -T postgres \
-  pg_dump -U postgres -d cachifa_db --clean --if-exists \
-  > ~/backups/cachifa-$(date +%Y%m%d-%H%M).sql
+docker compose -f docker-compose.prod.yml build backup
+mkdir -p ~/.config/cachifa-backup && chmod 700 ~/.config/cachifa-backup
 ```
 
-- `exec -T` evita que Docker asigne un TTY y corrompa el archivo redirigido.
-- `--clean --if-exists` hace el dump restaurable sobre una base que ya tenga
-  tablas, sin tener que borrarla a mano antes.
-- El comando corre `pg_dump` **dentro** del contenedor, así que no necesitas
-  cliente de Postgres instalado en la laptop.
+**Opción A — Backblaze B2 (recomendada: llaves fijas, sin OAuth).**
 
-Comprimido, si el archivo empieza a crecer:
+1. En backblaze.com: crea un bucket **privado** (ej. `cachifa-backups`) y una
+   *Application Key* limitada a ese bucket con permisos de lectura y escritura.
+   Anota `keyID` y `applicationKey`.
+2. Abre el asistente de rclone:
+
+   ```bash
+   docker run --rm -it --entrypoint rclone \
+     -v ~/.config/cachifa-backup:/config/rclone \
+     cachifa-backup:prod config
+   ```
+
+3. `n` (nuevo remoto) → nombre `cachifa-b2` → tipo `b2` → pega `account`
+   (el keyID) y `key` → en *Edit advanced config?* responde `y` y pon
+   **`hard_delete` = `true`** (si no, B2 guarda las versiones borradas y la
+   retención no libera espacio) → el resto por defecto.
+4. `n` otra vez → nombre **`cachifa-crypt`** → tipo `crypt` →
+   `remote`: `cachifa-b2:cachifa-backups` → `filename_encryption`: `standard`
+   → `directory_name_encryption`: `true` → contraseña: **`g` (generar)**
+   (acepta el tamaño que propone o sube a 256 bits) → *salt* (`password2`):
+   **`g`** también. rclone muestra cada una **una sola vez** antes de
+   confirmarla: **cópialas al gestor de contraseñas en ese momento.**
+5. `q` para salir.
+
+**Opción B — Google Drive.** Igual, pero el primer remoto es `drive`
+(nombre `cachifa-drive`). Drive usa OAuth: el asistente pide autorizar en un
+navegador; dentro del contenedor no hay navegador, así que responde `n` a
+*"Use web browser to automatically authenticate"* y sigue las instrucciones
+(`rclone authorize "drive"` en una máquina con navegador, p. ej. con
+`brew install rclone`). En la config avanzada pon `use_trash` = `false` para que
+la retención borre de verdad. El `crypt` se crea igual, con `remote = cachifa-drive:cachifa-backups`.
+El servicio trabaja sobre una copia de la config, así que la renovación del
+token de Drive funciona aunque el archivo esté montado en solo lectura.
+
+Al final, protege el archivo y pruébalo (en Linux el contenedor lo crea como
+`root`: antes haz `sudo chown "$USER" ~/.config/cachifa-backup/rclone.conf`):
+
+```bash
+chmod 600 ~/.config/cachifa-backup/rclone.conf
+docker run --rm --entrypoint rclone \
+  -v ~/.config/cachifa-backup:/config/rclone:ro \
+  cachifa-backup:prod lsd cachifa-crypt:       # no debe dar error
+```
+
+Si el remoto no se llama `cachifa-crypt`, pon `BACKUP_RCLONE_REMOTE=<nombre>:`
+en el `.env`.
+
+### 5.3 Levantar el servicio
+
+```bash
+docker compose -f docker-compose.prod.yml up -d backup
+docker compose -f docker-compose.prod.yml logs -f backup
+```
+
+Solo levanta `backup` (y `postgres` si no estaba arriba); no reinicia `app` ni
+`cloudflared`. Si es la primera vez y ya pasaron las 03:00, el primer backup
+corre en ese momento. Un `up -d --build` normal del despliegue (§4) también lo
+levanta o lo actualiza.
+
+### 5.4 Ver el estado
+
+```bash
+# Último intento (result: "ok" | "error", lastSuccessAt = último backup bueno)
+docker compose -f docker-compose.prod.yml exec backup cachifa-backup status
+
+# Qué hay en local y en cada nivel remoto (nombres ya descifrados)
+docker compose -f docker-compose.prod.yml exec backup cachifa-backup list
+
+# Logs: cada paso queda con fecha; los fallos empiezan por "ERROR:"
+docker compose -f docker-compose.prod.yml logs --since 48h backup
+```
+
+**Señal de alarma:** `lastSuccessAt` de hace más de un día, o `result: "error"`.
+
+Para forzar un backup ahora (por ejemplo, **antes de un despliegue con
+migraciones**):
+
+```bash
+docker compose -f docker-compose.prod.yml exec backup cachifa-backup run
+```
+
+### 5.5 Probar que se puede restaurar
+
+```bash
+scripts/restore-test.sh            # último dump local
+scripts/restore-test.sh --remote   # último dump de daily/ en el remoto (prueba también el descifrado)
+```
+
+Restaura en una base de descarte `cachifa_restore_test` del mismo Postgres,
+muestra cuántas filas tienen las tablas clave, falla si falta alguna tabla y
+borra la base al terminar. **No toca `cachifa_db`.** Conviene correrlo una vez
+al mes y después de cambiar la config de rclone.
+
+> Un backup que nunca se restauró es una suposición, no un respaldo.
+
+### 5.6 Restaurar de verdad
+
+Esto **reemplaza** el contenido de `cachifa_db` (el dump trae `--clean`).
+
+```bash
+# 1. Para la API para que nadie escriba mientras tanto
+docker compose -f docker-compose.prod.yml stop app
+
+# 2. Guarda el estado actual por si acaso
+docker compose -f docker-compose.prod.yml exec backup cachifa-backup run
+
+# 3a. Desde el último dump local (o elige otro con `cachifa-backup list`)
+docker compose -f docker-compose.prod.yml exec backup sh -c \
+  'gunzip -c "$(ls -1 /backups/cachifa-*.sql.gz | sort | tail -n 1)" | psql -v ON_ERROR_STOP=1 -q >/dev/null'
+
+# 3b. …o desde el remoto (daily, weekly o monthly)
+docker compose -f docker-compose.prod.yml exec backup sh -c \
+  'gunzip -c "$(cachifa-backup fetch daily | tail -n 1)" | psql -v ON_ERROR_STOP=1 -q >/dev/null'
+
+# 4. Comprueba el esquema y vuelve a levantar la API
+docker compose -f docker-compose.prod.yml run --rm app pnpm prisma migrate status
+docker compose -f docker-compose.prod.yml start app
+```
+
+`psql` dentro de `backup` ya apunta a `cachifa_db` con las credenciales del
+`.env` (`PGHOST`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`).
+
+### 5.7 Dump manual (sin el servicio)
+
+Si el servicio `backup` no está disponible:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec -T postgres \
@@ -224,46 +367,8 @@ docker compose -f docker-compose.prod.yml exec -T postgres \
   | gzip > ~/backups/cachifa-$(date +%Y%m%d-%H%M).sql.gz
 ```
 
-### 5.2 Sacarlo de la laptop
-
-Un dump que se queda en el mismo disco que la base **no es un backup**. Después
-de crearlo, súbelo a un almacenamiento propio fuera del equipo — por ejemplo:
-
-```bash
-# rclone hacia un bucket / Drive / lo que uses
-rclone copy ~/backups/cachifa-$(date +%Y%m%d)*.sql <remoto>:cachifa-backups/
-
-# o scp a otra máquina
-scp ~/backups/cachifa-*.sql usuario@otro-equipo:/backups/cachifa/
-```
-
-**Cadencia sugerida:** una vez por semana, y siempre antes de un `up -d --build`
-que traiga migraciones nuevas. Conserva al menos los últimos 4 dumps: un backup
-único también se corrompe.
-
-### 5.3 Restaurar
-
-```bash
-# Sobre una base ya levantada (--clean se encarga de limpiar lo anterior)
-cat ~/backups/cachifa-20260908-2100.sql | \
-  docker compose -f docker-compose.prod.yml exec -T postgres \
-  psql -U postgres -d cachifa_db
-
-# Si el dump está comprimido
-gunzip -c ~/backups/cachifa-20260908-2100.sql.gz | \
-  docker compose -f docker-compose.prod.yml exec -T postgres \
-  psql -U postgres -d cachifa_db
-```
-
-Después de restaurar, confirma que el esquema está al día:
-
-```bash
-docker compose -f docker-compose.prod.yml exec app pnpm prisma migrate status
-```
-
-> Prueba la restauración al menos una vez, sobre una base de descarte
-> (`POSTGRES_DB` distinto o un proyecto Compose aparte con `-p cachifa_test`).
-> Un backup que nunca se restauró es una suposición, no un respaldo.
+`exec -T` evita que Docker asigne un TTY y corrompa el archivo. Un dump que se
+queda en el mismo disco que la base **no es un backup**: súbelo a otro lado.
 
 ---
 
@@ -300,18 +405,24 @@ Si tras el mes nada de eso molestó, seguir en la laptop es la decisión correct
 El despliegue está armado para que la migración sea copiar tres cosas y nada
 más — no hay estado fuera de estos elementos:
 
-1. El repo (o al menos `docker-compose.prod.yml` + `Dockerfile` + `prisma/`).
+1. El repo (o al menos `docker-compose.prod.yml` + `Dockerfile` + `prisma/` + `backup/`).
 2. El archivo `.env` (ajustando `DATABASE_URL` si cambian las credenciales).
-3. Un dump de Postgres hecho con §5.1.
+3. `~/.config/cachifa-backup/rclone.conf` (desde el gestor de contraseñas si la
+   laptop ya no está): con él, el VPS lee los backups cifrados y sigue subiendo.
+4. El dump a restaurar: el más reciente del remoto (§5.6, opción 3b).
 
 En el VPS, con solo Docker instalado:
 
 ```bash
+docker compose -f docker-compose.prod.yml up -d --build postgres backup
+docker compose -f docker-compose.prod.yml exec backup sh -c \
+  'gunzip -c "$(cachifa-backup fetch daily | tail -n 1)" | psql -v ON_ERROR_STOP=1 -q >/dev/null'
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec app pnpm prisma migrate deploy
-cat cachifa-<fecha>.sql | docker compose -f docker-compose.prod.yml exec -T postgres \
-  psql -U postgres -d cachifa_db
 ```
+
+Apaga el servicio `backup` de la laptop cuando el VPS ya esté subiendo, para no
+tener dos máquinas escribiendo en el mismo remoto.
 
 El túnel de Cloudflare se mueve solo: el mismo `CLOUDFLARE_TUNNEL_TOKEN`
 funciona desde cualquier máquina. Levanta `cloudflared` en el VPS y apaga el de
@@ -331,3 +442,6 @@ base equivocada.
 | El dominio da 502 pero `curl localhost:3000` funciona | La Public Hostname del túnel apunta a `localhost:3000` en vez de `app:3000` (§2) |
 | `401 Unauthorized` en todo menos `/health` | Falta la cabecera `X-API-Key`, o el móvil quedó con la clave de desarrollo |
 | `429 Too Many Requests` | Rate limit de 60 req/min por IP (`ThrottlerModule` en `app.module.ts`) |
+| Logs de `backup` con `rclone config not found` | Falta `~/.config/cachifa-backup/rclone.conf` en el host (§5.2), o `BACKUP_RCLONE_CONFIG_DIR` apunta a otra carpeta |
+| Logs de `backup` con `remote 'cachifa-crypt:' is not defined` | El remoto `crypt` tiene otro nombre: ponlo en `BACKUP_RCLONE_REMOTE` (§5.2) |
+| `backup` con `result: "error"` y `pg_dump failed` | `postgres` caído o credenciales `POSTGRES_*` distintas a las de la base |
