@@ -15,8 +15,9 @@ import {
 import { MONTH_YEAR_MESSAGE, MONTH_YEAR_REGEX } from '@common/utils/month.util';
 
 /**
- * Todos los campos son opcionales. `accountId` acepta `null` de forma
- * explícita para desligar la transacción de una cuenta.
+ * Todos los campos son opcionales. `accountId` y `recurringExpenseId` aceptan
+ * `null` de forma explícita para desligar la transacción de una cuenta o de un
+ * gasto fijo.
  */
 export class UpdateTransactionDto {
   @IsOptional()
@@ -41,6 +42,16 @@ export class UpdateTransactionDto {
   @IsString()
   @IsNotEmpty()
   accountId?: string | null;
+
+  /**
+   * Cruza la transacción con un gasto fijo, o la descruza con `null`. Si se
+   * omite, el vínculo no cambia. Mismas reglas que al crear: el gasto fijo
+   * debe ser del usuario y de la misma categoría que la transacción.
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  recurringExpenseId?: string | null;
 
   @IsOptional()
   @IsArray()

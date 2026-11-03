@@ -113,6 +113,13 @@ export class TransactionsService {
     if (dto.accountId !== undefined) {
       await this.assertAccountOwnership(dto.accountId, userId);
     }
+    if (dto.recurringExpenseId !== undefined) {
+      await this.assertRecurringExpenseMatch(
+        dto.recurringExpenseId,
+        userId,
+        dto.category ?? existing.category,
+      );
+    }
 
     const nextDate = dto.transactionDate
       ? new Date(dto.transactionDate)
@@ -133,6 +140,11 @@ export class TransactionsService {
             ? { description: dto.description }
             : {}),
           ...(dto.accountId !== undefined ? { accountId: dto.accountId } : {}),
+          // Los pendientes de `GET /recurring-expenses/pending` se derivan de
+          // este vínculo al leerlos; la cascada de abajo cubre ledger y budgets.
+          ...(dto.recurringExpenseId !== undefined
+            ? { recurringExpenseId: dto.recurringExpenseId }
+            : {}),
           ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
         },
         include: { account: true },
