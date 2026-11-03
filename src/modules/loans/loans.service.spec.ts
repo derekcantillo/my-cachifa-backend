@@ -358,3 +358,80 @@ describe('LoansService.removeRepayment', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+describe('LoansService — fechas de préstamo y abonos', () => {
+  it('PATCH rechaza un loanDate posterior al primer abono', async () => {
+    const { service, prisma } = setup(
+      loan({
+        amountRepaid: new Prisma.Decimal(100_000),
+        status: LoanStatus.PARTIALLY_PAID,
+        repayments: [
+          repayment('rep_2', 50_000, '2026-09-25T17:00:00Z'),
+          repayment('rep_1', 50_000, '2026-09-15T17:00:00Z'),
+        ],
+      }),
+    );
+
+    await expect(
+      service.update('loan_1', { loanDate: '2026-09-16T17:00:00.000Z' }),
+    ).rejects.toThrow(
+      'loanDate (2026-09-16) cannot be after the first repayment (2026-09-15)',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('PATCH acepta un loanDate del mismo día que el primer abono, aunque sea más tarde', async () => {
+    const { service } = setup(
+      loan({
+        amountRepaid: new Prisma.Decimal(50_000),
+        status: LoanStatus.PARTIALLY_PAID,
+        // 8:00 a. m. en Bogotá.
+        repayments: [repayment('rep_1', 50_000, '2026-09-15T13:00:00Z')],
+      }),
+    );
+
+    // 6:00 p. m. del mismo día en Bogotá.
+    const result = await service.update('loan_1', {
+      loanDate: '2026-09-15T23:00:00.000Z',
+    });
+
+    expect(result.loanDate).toBe('2026-09-15T23:00:00.000Z');
+  });
+
+  it('addRepayment rechaza un paidAt anterior a loanDate', async () => {
+    const { service, prisma } = setup(loan());
+
+    await expect(
+      service.addRepayment('loan_1', {
+        amount: 50_000,
+        paidAt: '2026-09-09T17:00:00.000Z',
+      }),
+    ).rejects.toThrow(
+      'paidAt (2026-09-09) cannot be before the loan date (2026-09-10)',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('addRepayment acepta un abono del mismo día que el préstamo, aunque sea más temprano', async () => {
+    const { service, repaymentCreate } = setup(loan());
+
+    // El préstamo es el 10 sep a mediodía (Bogotá); el abono, ese día a las 7:00.
+    await service.addRepayment('loan_1', {
+      amount: 50_000,
+      paidAt: '2026-09-10T12:00:00.000Z',
+    });
+
+    expect(repaymentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechaza con BadRequestException', async () => {
+    const { service } = setup(loan());
+
+    await expect(
+      service.addRepayment('loan_1', {
+        amount: 50_000,
+        paidAt: '2026-08-01T17:00:00.000Z',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});

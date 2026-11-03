@@ -3,9 +3,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Category, LoanStatus, Prisma, TransactionType } from '@prisma/client';
+import {
+  Category,
+  LoanStatus,
+  Prisma,
+  TransactionType,
+  type LoanRepayment,
+} from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { toMonthYear } from '@common/utils/month.util';
+import { toFinancialCalendarDate } from '@common/utils/period.util';
 import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateLoanDto } from './dto/create-loan.dto';
@@ -22,6 +29,17 @@ import {
 const REPAYMENTS_DESC = {
   repayments: { orderBy: { paidAt: 'desc' as const } },
 };
+
+/**
+ * `YYYY-MM-DD` del día (hora de Colombia) en que cae `date`. Las fechas de
+ * préstamo y abono se comparan por día: los clientes mandan "hoy" con la hora
+ * actual y otros días a mediodía, así que comparar instantes rechazaría un
+ * abono del mismo día que el préstamo.
+ */
+function financialDayKey(date: Date): string {
+  const { year, month, day } = toFinancialCalendarDate(date);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
 
 /** Estado de un préstamo según lo abonado frente al monto prestado. */
 function loanStatusFor(
@@ -120,6 +138,9 @@ export class LoansService {
     }
     const loanDate =
       dto.loanDate !== undefined ? new Date(dto.loanDate) : undefined;
+    if (loanDate !== undefined) {
+      this.assertLoanDateNotAfterRepayments(loanDate, loan.repayments);
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.loan.update({
@@ -180,6 +201,11 @@ export class LoansService {
     const nextAmountRepaid = loan.amountRepaid.add(amount);
     const nextStatus = loanStatusFor(nextAmountRepaid, loan.amount);
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    if (financialDayKey(paidAt) < financialDayKey(loan.loanDate)) {
+      throw new BadRequestException(
+        `paidAt (${financialDayKey(paidAt)}) cannot be before the loan date (${financialDayKey(loan.loanDate)})`,
+      );
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const repayment = await tx.loanRepayment.create({
@@ -303,6 +329,22 @@ export class LoansService {
     });
     if (changes.loanDate !== undefined) {
       await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
+    }
+  }
+
+  private assertLoanDateNotAfterRepayments(
+    loanDate: Date,
+    repayments: LoanRepayment[],
+  ): void {
+    const loanDay = financialDayKey(loanDate);
+    const firstRepaymentDay = repayments
+      .map((repayment) => financialDayKey(repayment.paidAt))
+      .sort()[0];
+
+    if (firstRepaymentDay !== undefined && loanDay > firstRepaymentDay) {
+      throw new BadRequestException(
+        `loanDate (${loanDay}) cannot be after the first repayment (${firstRepaymentDay})`,
+      );
     }
   }
 
