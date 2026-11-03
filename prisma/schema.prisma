@@ -183,9 +183,8 @@ model Transaction {
   budgetPeriod       String?           @map("budget_period")
   /**
    * Período financiero (salario a salario) en cuyo rango cae
-   * `transactionDate`. Lo mantiene `FinancialPeriodService`; convive con
-   * `monthYear` mientras budgets/ledger/reports siguen usando el mes
-   * calendario.
+   * `transactionDate`. Lo mantiene `FinancialPeriodService`. Es la clave
+   * por la que budgets, ledger y reports agrupan las transacciones.
    */
   periodId           String?           @map("period_id")
   createdAt          DateTime          @default(now()) @map("created_at")
