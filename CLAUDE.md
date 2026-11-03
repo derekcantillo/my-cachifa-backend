@@ -43,5 +43,5 @@ Laptop de Derek como servidor, Docker Compose (`docker-compose.prod.yml`: postgr
 
 ## Estado (2026-11-03)
 - **Bloque A hecho (en `main`):** error de lint de `main.ts` (import ES de `fastify-raw-body`), módulo `anthropic/` vacío eliminado, `platform-express` retirado, boilerplate de `app.controller/service` borrado y e2e reescrito para `/health`, bug `?unreadOnly=false` corregido con test, comentario de `periodId` en el schema, README real.
-- **Pendiente:** backup automático fuera del laptop (último dump 2026-09-18), `recurringExpenseId` en el PATCH de transacciones, consistencia de préstamos al editar/borrar tx `LOAN_*`, doble conteo de metas en `/net-worth`, retirar `monthYear`/`budgetPeriod`, tests de servicios clave (hoy solo 4 specs).
+- **Pendiente:** backup automático fuera del laptop (último dump 2026-09-18), doble conteo de metas en `/net-worth`, retirar `monthYear`/`budgetPeriod`, tests de servicios clave (ya hay specs de `TransactionsService.update/remove` y `LoansService.update`; faltan ledger, períodos y el resto de transactions/loans).
 - **Fase 2:** modelos `Debt` y `CreditCard` (hoy `net-worth.service.ts` deja deudas y tarjetas en 0; `DEBT_PAYMENT` existe sin modelo), bot de WhatsApp (clasifica con IA pero no guarda la transacción).
