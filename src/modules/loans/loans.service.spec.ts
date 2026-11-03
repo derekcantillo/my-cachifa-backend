@@ -1,9 +1,10 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   Category,
   LoanStatus,
   Prisma,
   TransactionType,
+  type LoanRepayment,
   type Transaction,
 } from '@prisma/client';
 import type { CurrentUserService } from '@common/services/current-user.service';
@@ -31,6 +32,21 @@ function loan(overrides: Partial<LoanWithRepayments> = {}): LoanWithRepayments {
     updatedAt: LOAN_DATE,
     repayments: [],
     ...overrides,
+  };
+}
+
+function repayment(
+  id: string,
+  amount: number,
+  paidAt = '2026-09-20T17:00:00Z',
+): LoanRepayment {
+  return {
+    id,
+    loanId: 'loan_1',
+    amount: new Prisma.Decimal(amount),
+    paidAt: new Date(paidAt),
+    note: null,
+    createdAt: new Date(paidAt),
   };
 }
 
@@ -83,9 +99,19 @@ function setup(
   existing: LoanWithRepayments,
   account: { id: string } | null = { id: 'acc_2' },
 ) {
+  const deletedRepayments = new Set<string>();
   const loanUpdate = jest.fn(({ data }: { data: Record<string, unknown> }) =>
-    Promise.resolve(applyLoanData(existing, data)),
+    Promise.resolve({
+      ...applyLoanData(existing, data),
+      repayments: existing.repayments.filter(
+        (item) => !deletedRepayments.has(item.id),
+      ),
+    }),
   );
+  const repaymentDelete = jest.fn(({ where }: { where: { id: string } }) => {
+    deletedRepayments.add(where.id);
+    return Promise.resolve(undefined);
+  });
   const repaymentCreate = jest.fn(({ data }: { data: object }) =>
     Promise.resolve({ id: 'rep_new', createdAt: LOAN_DATE, ...data }),
   );
@@ -103,7 +129,7 @@ function setup(
 
   const tx = {
     loan: { update: loanUpdate },
-    loanRepayment: { create: repaymentCreate },
+    loanRepayment: { create: repaymentCreate, delete: repaymentDelete },
     transaction: {
       findFirst: transactionFindFirst,
       update: transactionUpdate,
@@ -131,6 +157,7 @@ function setup(
     prisma,
     loanUpdate,
     repaymentCreate,
+    repaymentDelete,
     transactionCreate,
     transactionFindFirst,
     transactionUpdate,
@@ -272,5 +299,62 @@ describe('LoansService.addRepayment', () => {
     });
     expect(result.amountRepaid).toBe(200_000);
     expect(result.status).toBe(LoanStatus.PARTIALLY_PAID);
+  });
+});
+
+describe('LoansService.removeRepayment', () => {
+  it('borra el abono, resta su monto y vuelve de PAID a PARTIALLY_PAID', async () => {
+    const { service, repaymentDelete } = setup(
+      loan({
+        amountRepaid: new Prisma.Decimal(1_000_000),
+        status: LoanStatus.PAID,
+        repayments: [repayment('rep_1', 600_000), repayment('rep_2', 400_000)],
+      }),
+    );
+
+    const result = await service.removeRepayment('loan_1', 'rep_2');
+
+    expect(repaymentDelete).toHaveBeenCalledWith({ where: { id: 'rep_2' } });
+    expect(result.amountRepaid).toBe(600_000);
+    expect(result.remainingAmount).toBe(400_000);
+    expect(result.status).toBe(LoanStatus.PARTIALLY_PAID);
+    expect(result.repayments.map((item) => item.id)).toEqual(['rep_1']);
+  });
+
+  it('vuelve a ACTIVE al borrar el único abono', async () => {
+    const { service } = setup(
+      loan({
+        amountRepaid: new Prisma.Decimal(300_000),
+        status: LoanStatus.PARTIALLY_PAID,
+        repayments: [repayment('rep_1', 300_000)],
+      }),
+    );
+
+    const result = await service.removeRepayment('loan_1', 'rep_1');
+
+    expect(result.amountRepaid).toBe(0);
+    expect(result.status).toBe(LoanStatus.ACTIVE);
+    expect(result.repayments).toEqual([]);
+  });
+
+  it('responde 404 si el abono no es de ese préstamo, sin escribir nada', async () => {
+    const { service, prisma } = setup(
+      loan({ repayments: [repayment('rep_1', 300_000)] }),
+    );
+
+    await expect(
+      service.removeRepayment('loan_1', 'rep_otro'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('responde 404 si el préstamo no es del usuario', async () => {
+    const { service, prisma } = setup(loan());
+    prisma.loan.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.removeRepayment('loan_ajeno', 'rep_1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

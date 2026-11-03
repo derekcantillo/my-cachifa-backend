@@ -217,6 +217,45 @@ export class LoansService {
   }
 
   /**
+   * Deshace un abono. Su `LOAN_REPAYMENT` se va con él por la FK
+   * `Transaction.loanRepaymentId` (cascade); un abono viejo sin transacción
+   * vinculada se borra igual. Como `LOAN_REPAYMENT` no entra en ledger ni en
+   * presupuestos, no hay cascada que disparar.
+   */
+  async removeRepayment(
+    id: string,
+    repaymentId: string,
+  ): Promise<ILoanDetailResponse> {
+    const userId = await this.currentUser.getUserId();
+    const loan = await this.findOwned(id, userId);
+
+    const repayment = loan.repayments.find((item) => item.id === repaymentId);
+    if (!repayment) {
+      throw new NotFoundException(
+        `Repayment ${repaymentId} not found in loan ${id}`,
+      );
+    }
+
+    const nextAmountRepaid = loan.amountRepaid.minus(repayment.amount);
+    const nextStatus = loanStatusFor(nextAmountRepaid, loan.amount);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.loanRepayment.delete({ where: { id: repaymentId } });
+
+      return tx.loan.update({
+        where: { id },
+        data: {
+          amountRepaid: { decrement: repayment.amount },
+          status: nextStatus,
+        },
+        include: REPAYMENTS_DESC,
+      });
+    });
+
+    return toLoanDetailResponse(updated);
+  }
+
+  /**
    * Lleva a la transacción `LOAN_GIVEN` del préstamo los campos que cambiaron
    * en él. No dispara la cascada de ledger y presupuestos: `LOAN_GIVEN` no
    * entra en ninguno de los dos (ver `EXPENSE_TYPES` en `PeriodLedgerService`

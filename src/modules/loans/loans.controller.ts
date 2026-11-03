@@ -48,6 +48,14 @@ export class LoansController {
     return this.loansService.addRepayment(id, dto);
   }
 
+  @Delete(':id/repayments/:repaymentId')
+  removeRepayment(
+    @Param('id') id: string,
+    @Param('repaymentId') repaymentId: string,
+  ): Promise<ILoanDetailResponse> {
+    return this.loansService.removeRepayment(id, repaymentId);
+  }
+
   @Patch(':id')
   update(
     @Param('id') id: string,
