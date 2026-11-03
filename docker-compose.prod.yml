@@ -72,8 +72,39 @@ services:
     networks:
       - cachifa_network
 
+  backup:
+    # Daily pg_dump → gzip → encrypted upload with rclone (see backup/ and DEPLOY.md §5).
+    build:
+      context: ./backup
+    image: cachifa-backup:prod
+    container_name: cachifa_backup
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      # A `crypt` remote defined in the mounted rclone.conf (name: or name:path).
+      BACKUP_RCLONE_REMOTE: ${BACKUP_RCLONE_REMOTE:-cachifa-crypt:}
+      BACKUP_TIME: ${BACKUP_TIME:-03:00}
+      TZ: America/Bogota
+    volumes:
+      # rclone.conf (with the crypt passwords) stays on the host, read-only here.
+      # A directory, not the file: if it's missing Docker creates an empty folder and
+      # the logs say what's wrong, instead of creating a folder named rclone.conf.
+      - ${BACKUP_RCLONE_CONFIG_DIR:-${HOME}/.config/cachifa-backup}:/config/rclone:ro
+      - cachifa_backups:/backups
+      - cachifa_backup_status:/status
+    networks:
+      - cachifa_network
+
 volumes:
   cachifa_postgres_data:
+  cachifa_backups:
+  cachifa_backup_status:
 
 networks:
   cachifa_network:
