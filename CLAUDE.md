@@ -4,9 +4,10 @@ API de **Cachifa**, sistema de finanzas personales de un solo usuario (Derek). L
 
 ## Comandos
 - `pnpm install` · `pnpm start:dev` · `pnpm build` (`nest build`) · `pnpm start:prod`
-- `pnpm lint` (**trae `--fix`**: modifica archivos) · `pnpm test` (jest, specs en `src/**/*.spec.ts`) · `pnpm test:e2e` (necesita base de datos)
+- `pnpm lint` (**trae `--fix`**: modifica archivos) · `pnpm test` (jest, specs en `src/**/*.spec.ts`) · `pnpm test:e2e` (solo levanta `HealthModule`; no necesita base de datos)
 - `npx tsc --noEmit` para revisar tipos sin compilar
 - `pnpm prisma:migrate` (usa `.env`, `DATABASE_URL_LOCAL`) · `pnpm prisma:seed`
+- `DATABASE_URL` de `.env.example` apunta al host `postgres` (el contenedor). Para `pnpm start:dev` desde la máquina local hay que usar `localhost:5432`, o levantar `docker compose up app`.
 - Antes de cerrar un cambio: lint + `pnpm test` + `npx tsc --noEmit`.
 
 ## Stack
@@ -41,6 +42,6 @@ Laptop de Derek como servidor, Docker Compose (`docker-compose.prod.yml`: postgr
 - Decisiones cerradas no se reabren sin que Derek lo pida.
 
 ## Estado (2026-11-03)
-- **Hecho hoy (rama `chore/lint-cleanup-alerts-fix`, sin push ni merge a `main`):** error de lint de `main.ts` (import ES de `fastify-raw-body`), módulo `anthropic/` vacío eliminado, `platform-express` retirado, boilerplate de `app.controller/service` borrado, e2e reescrito para `/health`, bug `?unreadOnly=false` corregido con test, comentario de `periodId` en el schema.
-- **Pendiente:** README real (sigue siendo el de Nest), backup automático fuera del laptop (último dump 2026-09-18), `recurringExpenseId` en el PATCH de transacciones, consistencia de préstamos al editar/borrar tx `LOAN_*`, doble conteo de metas en `/net-worth`, retirar `monthYear`/`budgetPeriod`, tests de servicios clave (hoy solo 4 specs), borrar la rama remota `worktree-monthly-ledger-rollover` (ya integrada).
-- **Fase 2 posible:** modelos `Debt` y `CreditCard` (hoy `net-worth.service.ts` deja deudas y tarjetas en 0; `DEBT_PAYMENT` existe sin modelo), bot de WhatsApp (clasifica con IA pero no guarda la transacción).
+- **Bloque A hecho (en `main`):** error de lint de `main.ts` (import ES de `fastify-raw-body`), módulo `anthropic/` vacío eliminado, `platform-express` retirado, boilerplate de `app.controller/service` borrado y e2e reescrito para `/health`, bug `?unreadOnly=false` corregido con test, comentario de `periodId` en el schema, README real.
+- **Pendiente:** backup automático fuera del laptop (último dump 2026-09-18), `recurringExpenseId` en el PATCH de transacciones, consistencia de préstamos al editar/borrar tx `LOAN_*`, doble conteo de metas en `/net-worth`, retirar `monthYear`/`budgetPeriod`, tests de servicios clave (hoy solo 4 specs).
+- **Fase 2:** modelos `Debt` y `CreditCard` (hoy `net-worth.service.ts` deja deudas y tarjetas en 0; `DEBT_PAYMENT` existe sin modelo), bot de WhatsApp (clasifica con IA pero no guarda la transacción).
