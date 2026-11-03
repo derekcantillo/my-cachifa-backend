@@ -3,6 +3,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
+import { fastifyRawBody } from 'fastify-raw-body';
 import { AppModule } from './app.module';
 import { CORS_OPTIONS } from './config/cors.config';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -15,14 +16,11 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({ logger: false }),
   );
 
-  await app.register(
-    require('fastify-raw-body') as Parameters<typeof app.register>[0],
-    {
-      global: true,
-      encoding: 'utf8',
-      runFirst: true,
-    },
-  );
+  await app.register(fastifyRawBody, {
+    global: true,
+    encoding: 'utf8',
+    runFirst: true,
+  });
 
   app.enableCors(CORS_OPTIONS);
   app.setGlobalPrefix('api/v1', { exclude: ['webhook', 'webhook/(.*)'] });

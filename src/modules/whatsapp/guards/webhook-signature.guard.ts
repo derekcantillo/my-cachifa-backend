@@ -11,7 +11,7 @@ import type { FastifyRequest } from 'fastify';
 import type { AppConfig } from '@config/configuration';
 
 interface RawBodyRequest extends FastifyRequest {
-  rawBody?: Buffer | string | null;
+  rawBody?: Buffer | string;
 }
 
 @Injectable()
