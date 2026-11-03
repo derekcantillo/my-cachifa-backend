@@ -182,7 +182,7 @@ export class LoansService {
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.loanRepayment.create({
+      const repayment = await tx.loanRepayment.create({
         data: { loanId: id, amount, paidAt, note: dto.note ?? null },
       });
 
@@ -191,6 +191,7 @@ export class LoansService {
           userId,
           accountId: loan.accountId,
           loanId: id,
+          loanRepaymentId: repayment.id,
           amount,
           type: TransactionType.LOAN_REPAYMENT,
           category: Category.LOAN,

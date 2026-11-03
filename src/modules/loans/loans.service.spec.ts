@@ -40,6 +40,7 @@ const GIVEN: Transaction = {
   accountId: 'acc_1',
   recurringExpenseId: null,
   loanId: 'loan_1',
+  loanRepaymentId: null,
   amount: new Prisma.Decimal(1_000_000),
   type: TransactionType.LOAN_GIVEN,
   category: Category.LOAN,
@@ -54,6 +55,26 @@ const GIVEN: Transaction = {
   updatedAt: LOAN_DATE,
 };
 
+/** Aplica el `data` de `tx.loan.update`, incluido `{ increment }` / `{ decrement }`. */
+function applyLoanData(
+  existing: LoanWithRepayments,
+  data: Record<string, unknown>,
+): LoanWithRepayments {
+  const { amountRepaid, ...rest } = data;
+  let nextRepaid = existing.amountRepaid;
+  if (amountRepaid instanceof Prisma.Decimal) {
+    nextRepaid = amountRepaid;
+  } else if (amountRepaid && typeof amountRepaid === 'object') {
+    const change = amountRepaid as {
+      increment?: Prisma.Decimal;
+      decrement?: Prisma.Decimal;
+    };
+    if (change.increment) nextRepaid = nextRepaid.add(change.increment);
+    if (change.decrement) nextRepaid = nextRepaid.minus(change.decrement);
+  }
+  return { ...existing, ...rest, amountRepaid: nextRepaid };
+}
+
 /**
  * `existing` es lo que devuelve `findOwned`; `account` lo que encuentra la
  * validación de cuenta (`null` = no es del usuario).
@@ -62,8 +83,14 @@ function setup(
   existing: LoanWithRepayments,
   account: { id: string } | null = { id: 'acc_2' },
 ) {
-  const loanUpdate = jest.fn(({ data }: { data: object }) =>
-    Promise.resolve({ ...existing, ...data }),
+  const loanUpdate = jest.fn(({ data }: { data: Record<string, unknown> }) =>
+    Promise.resolve(applyLoanData(existing, data)),
+  );
+  const repaymentCreate = jest.fn(({ data }: { data: object }) =>
+    Promise.resolve({ id: 'rep_new', createdAt: LOAN_DATE, ...data }),
+  );
+  const transactionCreate = jest.fn(({ data }: { data: object }) =>
+    Promise.resolve({ ...GIVEN, id: 'tx_new', periodId: null, ...data }),
   );
   const transactionUpdate = jest.fn(({ data }: { data: object }) =>
     Promise.resolve({ ...GIVEN, ...data }),
@@ -76,7 +103,12 @@ function setup(
 
   const tx = {
     loan: { update: loanUpdate },
-    transaction: { findFirst: transactionFindFirst, update: transactionUpdate },
+    loanRepayment: { create: repaymentCreate },
+    transaction: {
+      findFirst: transactionFindFirst,
+      update: transactionUpdate,
+      create: transactionCreate,
+    },
   };
   const prisma = {
     loan: { findFirst: jest.fn().mockResolvedValue(existing) },
@@ -98,6 +130,8 @@ function setup(
     service,
     prisma,
     loanUpdate,
+    repaymentCreate,
+    transactionCreate,
     transactionFindFirst,
     transactionUpdate,
     assignTransactionToPeriod,
@@ -218,5 +252,25 @@ describe('LoansService.update', () => {
 
     expect(transactionFindFirst).not.toHaveBeenCalled();
     expect(transactionUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('LoansService.addRepayment', () => {
+  it('vincula la transacción LOAN_REPAYMENT con el abono que crea', async () => {
+    const { service, repaymentCreate, transactionCreate } = setup(loan());
+
+    const result = await service.addRepayment('loan_1', {
+      amount: 200_000,
+      paidAt: '2026-09-20T17:00:00.000Z',
+    });
+
+    expect(repaymentCreate).toHaveBeenCalledTimes(1);
+    expect(transactionCreate.mock.calls[0][0].data).toMatchObject({
+      type: TransactionType.LOAN_REPAYMENT,
+      loanId: 'loan_1',
+      loanRepaymentId: 'rep_new',
+    });
+    expect(result.amountRepaid).toBe(200_000);
+    expect(result.status).toBe(LoanStatus.PARTIALLY_PAID);
   });
 });
