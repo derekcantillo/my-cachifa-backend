@@ -22,6 +22,9 @@ import {
   type TransactionWithAccount,
 } from './interfaces/transaction-response.interface';
 
+const LINKED_CATEGORY_CHANGE_HINT =
+  'Send recurringExpenseId: null to unlink it, or the id of a recurring expense in the new category.';
+
 @Injectable()
 export class TransactionsService {
   constructor(
@@ -118,6 +121,18 @@ export class TransactionsService {
         dto.recurringExpenseId,
         userId,
         dto.category ?? existing.category,
+      );
+    } else if (
+      dto.category !== undefined &&
+      dto.category !== existing.category &&
+      existing.recurringExpenseId
+    ) {
+      // El vínculo que ya tiene tiene que seguir valiendo con la categoría nueva.
+      await this.assertRecurringExpenseMatch(
+        existing.recurringExpenseId,
+        userId,
+        dto.category,
+        LINKED_CATEGORY_CHANGE_HINT,
       );
     }
 
@@ -240,6 +255,7 @@ export class TransactionsService {
     recurringExpenseId: string | null,
     userId: string,
     category: Category,
+    mismatchHint?: string,
   ): Promise<void> {
     if (!recurringExpenseId) return;
 
@@ -256,7 +272,7 @@ export class TransactionsService {
 
     if (expense.category !== category) {
       throw new BadRequestException(
-        `RecurringExpense ${recurringExpenseId} category (${expense.category}) does not match transaction category (${category})`,
+        `RecurringExpense ${recurringExpenseId} category (${expense.category}) does not match transaction category (${category})${mismatchHint ? `. ${mismatchHint}` : ''}`,
       );
     }
   }

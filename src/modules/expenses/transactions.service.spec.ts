@@ -157,3 +157,41 @@ describe('TransactionsService.update — vínculo con gasto fijo', () => {
     expect(transactionUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe('TransactionsService.update — cambio de categoría con vínculo existente', () => {
+  it('rechaza la categoría nueva si no coincide con el gasto fijo cruzado', async () => {
+    const { service, recurringExpenseFindFirst, transactionUpdate } = setup(
+      transaction({ recurringExpenseId: 're_1' }),
+      { category: Category.SERVICES },
+    );
+
+    const update = service.update('tx_1', { category: Category.FOOD });
+
+    await expect(update).rejects.toBeInstanceOf(BadRequestException);
+    await expect(update).rejects.toThrow(/recurringExpenseId: null/);
+    expect(recurringExpenseFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 're_1', userId: USER_ID } }),
+    );
+    expect(transactionUpdate).not.toHaveBeenCalled();
+  });
+
+  it('acepta la categoría nueva si el gasto fijo cruzado es de esa categoría', async () => {
+    const { service, updateData } = setup(
+      transaction({ recurringExpenseId: 're_1' }),
+      { category: Category.FOOD },
+    );
+
+    const result = await service.update('tx_1', { category: Category.FOOD });
+
+    expect(updateData()).toMatchObject({ category: Category.FOOD });
+    expect(result.recurringExpenseId).toBe('re_1');
+  });
+
+  it('no busca gasto fijo si la transacción no está cruzada', async () => {
+    const { service, recurringExpenseFindFirst } = setup(transaction());
+
+    await service.update('tx_1', { category: Category.FOOD });
+
+    expect(recurringExpenseFindFirst).not.toHaveBeenCalled();
+  });
+});
