@@ -23,6 +23,16 @@ const REPAYMENTS_DESC = {
   repayments: { orderBy: { paidAt: 'desc' as const } },
 };
 
+/** Estado de un préstamo según lo abonado frente al monto prestado. */
+function loanStatusFor(
+  amountRepaid: Prisma.Decimal,
+  amount: Prisma.Decimal,
+): LoanStatus {
+  if (amountRepaid.greaterThanOrEqualTo(amount)) return LoanStatus.PAID;
+  if (amountRepaid.greaterThan(0)) return LoanStatus.PARTIALLY_PAID;
+  return LoanStatus.ACTIVE;
+}
+
 @Injectable()
 export class LoansService {
   constructor(
@@ -95,19 +105,49 @@ export class LoansService {
 
   async update(id: string, dto: UpdateLoanDto): Promise<ILoanResponse> {
     const userId = await this.currentUser.getUserId();
-    await this.findOwned(id, userId);
+    const loan = await this.findOwned(id, userId);
 
-    const updated = await this.prisma.loan.update({
-      where: { id },
-      data: {
-        ...(dto.borrowerName !== undefined
-          ? { borrowerName: dto.borrowerName }
-          : {}),
-        ...(dto.dueDate !== undefined
-          ? { dueDate: new Date(dto.dueDate) }
-          : {}),
-        ...(dto.note !== undefined ? { note: dto.note } : {}),
-      },
+    if (dto.accountId !== undefined) {
+      await this.assertAccountOwnership(dto.accountId, userId);
+    }
+
+    const amount =
+      dto.amount !== undefined ? new Prisma.Decimal(dto.amount) : undefined;
+    if (amount?.lessThan(loan.amountRepaid)) {
+      throw new BadRequestException(
+        `Loan amount (${amount.toNumber()}) cannot be lower than the amount already repaid (${loan.amountRepaid.toNumber()})`,
+      );
+    }
+    const loanDate =
+      dto.loanDate !== undefined ? new Date(dto.loanDate) : undefined;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.loan.update({
+        where: { id },
+        data: {
+          ...(dto.borrowerName !== undefined
+            ? { borrowerName: dto.borrowerName }
+            : {}),
+          ...(amount !== undefined
+            ? { amount, status: loanStatusFor(loan.amountRepaid, amount) }
+            : {}),
+          ...(loanDate !== undefined ? { loanDate } : {}),
+          ...(dto.dueDate !== undefined
+            ? { dueDate: new Date(dto.dueDate) }
+            : {}),
+          ...(dto.note !== undefined ? { note: dto.note } : {}),
+          ...(dto.accountId !== undefined ? { accountId: dto.accountId } : {}),
+        },
+      });
+
+      await this.syncGivenTransaction(tx, id, {
+        amount,
+        loanDate,
+        accountId: dto.accountId,
+        borrowerName: dto.borrowerName,
+      });
+
+      return next;
     });
 
     return toLoanResponse(updated);
@@ -138,9 +178,7 @@ export class LoansService {
 
     const amount = new Prisma.Decimal(dto.amount);
     const nextAmountRepaid = loan.amountRepaid.add(amount);
-    const nextStatus = nextAmountRepaid.greaterThanOrEqualTo(loan.amount)
-      ? LoanStatus.PAID
-      : LoanStatus.PARTIALLY_PAID;
+    const nextStatus = loanStatusFor(nextAmountRepaid, loan.amount);
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -175,6 +213,57 @@ export class LoansService {
     });
 
     return toLoanDetailResponse(updated);
+  }
+
+  /**
+   * Lleva a la transacción `LOAN_GIVEN` del préstamo los campos que cambiaron
+   * en él. No dispara la cascada de ledger y presupuestos: `LOAN_GIVEN` no
+   * entra en ninguno de los dos (ver `EXPENSE_TYPES` en `PeriodLedgerService`
+   * y `BUDGET_AFFECTING_TYPES` en `BudgetRecalculationService`), y el saldo de
+   * las cuentas se calcula al leerlo.
+   */
+  private async syncGivenTransaction(
+    tx: Prisma.TransactionClient,
+    loanId: string,
+    changes: {
+      amount?: Prisma.Decimal;
+      loanDate?: Date;
+      accountId?: string | null;
+      borrowerName?: string;
+    },
+  ): Promise<void> {
+    const data: Prisma.TransactionUncheckedUpdateInput = {
+      ...(changes.amount !== undefined ? { amount: changes.amount } : {}),
+      ...(changes.loanDate !== undefined
+        ? {
+            transactionDate: changes.loanDate,
+            monthYear: toMonthYear(changes.loanDate),
+          }
+        : {}),
+      ...(changes.accountId !== undefined
+        ? { accountId: changes.accountId }
+        : {}),
+      ...(changes.borrowerName !== undefined
+        ? { description: `Préstamo a ${changes.borrowerName}` }
+        : {}),
+    };
+    if (Object.keys(data).length === 0) return;
+
+    const given = await tx.transaction.findFirst({
+      where: { loanId, type: TransactionType.LOAN_GIVEN },
+      select: { id: true },
+    });
+    // Un `LOAN_GIVEN` borrado desde Gastos antes de que /transactions lo
+    // bloqueara: no queda movimiento que corregir, solo el préstamo.
+    if (!given) return;
+
+    const transaction = await tx.transaction.update({
+      where: { id: given.id },
+      data,
+    });
+    if (changes.loanDate !== undefined) {
+      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
+    }
   }
 
   private async findOwned(
