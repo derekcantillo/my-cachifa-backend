@@ -9,11 +9,14 @@ import {
   Prisma,
   TransactionType,
   type LoanRepayment,
+  type Transaction,
 } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { toMonthYear } from '@common/utils/month.util';
 import { toFinancialCalendarDate } from '@common/utils/period.util';
+import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
+import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledger.constants';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateLoanDto } from './dto/create-loan.dto';
 import type { CreateLoanRepaymentDto } from './dto/create-loan-repayment.dto';
@@ -57,6 +60,7 @@ export class LoansService {
     private readonly prisma: PrismaService,
     private readonly currentUser: CurrentUserService,
     private readonly financialPeriods: FinancialPeriodService,
+    private readonly budgetRecalculation: BudgetRecalculationService,
   ) {}
 
   async findAll(): Promise<ILoanResponse[]> {
@@ -113,10 +117,10 @@ export class LoansService {
           monthYear: toMonthYear(loanDate),
         },
       });
-      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
+      await this.assignPeriod(tx, transaction);
 
       return loan;
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toLoanResponse(created);
   }
@@ -169,7 +173,7 @@ export class LoansService {
       });
 
       return next;
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toLoanResponse(updated);
   }
@@ -227,7 +231,7 @@ export class LoansService {
           monthYear: toMonthYear(paidAt),
         },
       });
-      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
+      await this.assignPeriod(tx, transaction);
 
       return tx.loan.update({
         where: { id },
@@ -237,7 +241,7 @@ export class LoansService {
         },
         include: REPAYMENTS_DESC,
       });
-    });
+    }, CASCADE_TRANSACTION_OPTIONS);
 
     return toLoanDetailResponse(updated);
   }
@@ -282,11 +286,35 @@ export class LoansService {
   }
 
   /**
+   * Asigna su período a un movimiento del préstamo. `LOAN_*` no entra en
+   * ledger ni presupuestos, así que en general no hay nada que recalcular. La
+   * excepción es una fecha anterior a todo período: la secuencia se rehace y
+   * el período de arranque cambia de rango (y con él, por ejemplo, los aportes
+   * a metas que cuenta su ledger). Eso se ve en un `affectedFrom` anterior a la
+   * fecha del movimiento, y solo entonces se dispara la cascada desde ahí.
+   */
+  private async assignPeriod(
+    tx: Prisma.TransactionClient,
+    transaction: Transaction,
+  ): Promise<void> {
+    const { affectedFrom } =
+      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
+
+    if (affectedFrom.getTime() < transaction.transactionDate.getTime()) {
+      await this.budgetRecalculation.recalculateFrom(
+        tx,
+        transaction.userId,
+        affectedFrom,
+      );
+    }
+  }
+
+  /**
    * Lleva a la transacción `LOAN_GIVEN` del préstamo los campos que cambiaron
-   * en él. No dispara la cascada de ledger y presupuestos: `LOAN_GIVEN` no
-   * entra en ninguno de los dos (ver `EXPENSE_TYPES` en `PeriodLedgerService`
-   * y `BUDGET_AFFECTING_TYPES` en `BudgetRecalculationService`), y el saldo de
-   * las cuentas se calcula al leerlo.
+   * en él. `LOAN_GIVEN` no entra en ledger ni presupuestos (ver
+   * `EXPENSE_TYPES` en `PeriodLedgerService` y `BUDGET_AFFECTING_TYPES` en
+   * `BudgetRecalculationService`) y el saldo de las cuentas se calcula al
+   * leerlo; la única cascada posible es la de `assignPeriod`.
    */
   private async syncGivenTransaction(
     tx: Prisma.TransactionClient,
@@ -328,7 +356,7 @@ export class LoansService {
       data,
     });
     if (changes.loanDate !== undefined) {
-      await this.financialPeriods.assignTransactionToPeriod(tx, transaction);
+      await this.assignPeriod(tx, transaction);
     }
   }
 

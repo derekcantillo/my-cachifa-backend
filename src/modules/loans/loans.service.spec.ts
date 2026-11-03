@@ -8,6 +8,7 @@ import {
   type Transaction,
 } from '@prisma/client';
 import type { CurrentUserService } from '@common/services/current-user.service';
+import type { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import type { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
 import type { PrismaService } from '@modules/prisma/prisma.service';
 import type { LoanWithRepayments } from './interfaces/loan-response.interface';
@@ -98,6 +99,7 @@ function applyLoanData(
 function setup(
   existing: LoanWithRepayments,
   account: { id: string } | null = { id: 'acc_2' },
+  rebuiltFrom?: Date,
 ) {
   const deletedRepayments = new Set<string>();
   const loanUpdate = jest.fn(({ data }: { data: Record<string, unknown> }) =>
@@ -122,13 +124,22 @@ function setup(
     Promise.resolve({ ...GIVEN, ...data }),
   );
   const transactionFindFirst = jest.fn().mockResolvedValue({ id: GIVEN.id });
-  const assignTransactionToPeriod = jest.fn().mockResolvedValue({
-    period: { id: 'period_oct' },
-    affectedFrom: LOAN_DATE,
-  });
+  // Por defecto el período ya existía: `affectedFrom` es la fecha del propio
+  // movimiento. Con `rebuiltFrom`, simula que hubo que rehacer la secuencia.
+  const assignTransactionToPeriod = jest.fn(
+    (_client: unknown, transaction: Transaction) =>
+      Promise.resolve({
+        period: { id: 'period_oct' },
+        affectedFrom: rebuiltFrom ?? transaction.transactionDate,
+      }),
+  );
+  const recalculateFrom = jest.fn().mockResolvedValue(undefined);
+  const loanCreate = jest.fn(({ data }: { data: object }) =>
+    Promise.resolve({ ...existing, ...data }),
+  );
 
   const tx = {
-    loan: { update: loanUpdate },
+    loan: { create: loanCreate, update: loanUpdate },
     loanRepayment: { create: repaymentCreate, delete: repaymentDelete },
     transaction: {
       findFirst: transactionFindFirst,
@@ -150,6 +161,7 @@ function setup(
       getUserId: jest.fn().mockResolvedValue(USER_ID),
     } as unknown as CurrentUserService,
     { assignTransactionToPeriod } as unknown as FinancialPeriodService,
+    { recalculateFrom } as unknown as BudgetRecalculationService,
   );
 
   return {
@@ -162,6 +174,7 @@ function setup(
     transactionFindFirst,
     transactionUpdate,
     assignTransactionToPeriod,
+    recalculateFrom,
   };
 }
 
@@ -433,5 +446,88 @@ describe('LoansService — fechas de préstamo y abonos', () => {
         paidAt: '2026-08-01T17:00:00.000Z',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('LoansService — cascada cuando se rehace la secuencia de períodos', () => {
+  /** Inicio del período de arranque rehecho, anterior a cualquier movimiento. */
+  const REBUILT_FROM = new Date('2026-08-01T05:00:00Z');
+
+  it('create recalcula desde affectedFrom si es anterior a loanDate', async () => {
+    const { service, recalculateFrom } = setup(loan(), undefined, REBUILT_FROM);
+
+    await service.create({
+      borrowerName: 'Ana',
+      amount: 1_000_000,
+      loanDate: '2026-08-15T17:00:00.000Z',
+    });
+
+    expect(recalculateFrom).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      REBUILT_FROM,
+    );
+  });
+
+  it('create no recalcula si el período ya existía', async () => {
+    const { service, recalculateFrom } = setup(loan());
+
+    await service.create({
+      borrowerName: 'Ana',
+      amount: 1_000_000,
+      loanDate: '2026-09-10T17:00:00.000Z',
+    });
+
+    expect(recalculateFrom).not.toHaveBeenCalled();
+  });
+
+  it('addRepayment recalcula desde affectedFrom si es anterior a paidAt', async () => {
+    const { service, recalculateFrom } = setup(
+      loan({ loanDate: new Date('2026-07-01T17:00:00Z') }),
+      undefined,
+      REBUILT_FROM,
+    );
+
+    await service.addRepayment('loan_1', {
+      amount: 50_000,
+      paidAt: '2026-08-10T17:00:00.000Z',
+    });
+
+    expect(recalculateFrom).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      REBUILT_FROM,
+    );
+  });
+
+  it('addRepayment no recalcula si el período ya existía', async () => {
+    const { service, recalculateFrom } = setup(loan());
+
+    await service.addRepayment('loan_1', {
+      amount: 50_000,
+      paidAt: '2026-09-20T17:00:00.000Z',
+    });
+
+    expect(recalculateFrom).not.toHaveBeenCalled();
+  });
+
+  it('update recalcula desde affectedFrom si el nuevo loanDate rehízo la secuencia', async () => {
+    const { service, recalculateFrom } = setup(loan(), undefined, REBUILT_FROM);
+
+    await service.update('loan_1', { loanDate: '2026-08-15T17:00:00.000Z' });
+
+    expect(recalculateFrom).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      REBUILT_FROM,
+    );
+  });
+
+  it('update no recalcula si el período del nuevo loanDate ya existía', async () => {
+    const { service, recalculateFrom } = setup(loan());
+
+    await service.update('loan_1', { loanDate: '2026-10-05T17:00:00.000Z' });
+
+    expect(recalculateFrom).not.toHaveBeenCalled();
   });
 });
