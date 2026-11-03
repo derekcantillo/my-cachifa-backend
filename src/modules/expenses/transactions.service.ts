@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TransactionType, type Category } from '@prisma/client';
+import { Prisma, type Category } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { toMonthYear } from '@common/utils/month.util';
@@ -17,16 +17,12 @@ import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledge
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateTransactionDto } from './dto/create-transaction.dto';
 import type { UpdateTransactionDto } from './dto/update-transaction.dto';
+import { LOAN_MOVEMENT_TYPES } from './loan-movement-types';
 import {
   toTransactionResponse,
   type ITransactionResponse,
   type TransactionWithAccount,
 } from './interfaces/transaction-response.interface';
-
-const LOAN_MOVEMENT_TYPES: TransactionType[] = [
-  TransactionType.LOAN_GIVEN,
-  TransactionType.LOAN_REPAYMENT,
-];
 
 const LINKED_CATEGORY_CHANGE_HINT =
   'Send recurringExpenseId: null to unlink it, or the id of a recurring expense in the new category.';

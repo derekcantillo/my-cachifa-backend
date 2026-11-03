@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsEnum,
   IsNotEmpty,
+  IsNotIn,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -13,6 +14,10 @@ import {
   MaxLength,
 } from 'class-validator';
 import { MONTH_YEAR_MESSAGE, MONTH_YEAR_REGEX } from '@common/utils/month.util';
+import {
+  LOAN_MOVEMENT_TYPE_MESSAGE,
+  LOAN_MOVEMENT_TYPES,
+} from '../loan-movement-types';
 
 export class CreateTransactionDto {
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -20,6 +25,7 @@ export class CreateTransactionDto {
   amount!: number;
 
   @IsEnum(TransactionType)
+  @IsNotIn(LOAN_MOVEMENT_TYPES, { message: LOAN_MOVEMENT_TYPE_MESSAGE })
   type!: TransactionType;
 
   @IsEnum(Category)

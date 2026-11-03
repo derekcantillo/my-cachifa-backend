@@ -34,3 +34,23 @@ describe('UpdateTransactionDto — recurringExpenseId', () => {
     );
   });
 });
+
+describe('UpdateTransactionDto — type', () => {
+  it.each(['LOAN_GIVEN', 'LOAN_REPAYMENT'])(
+    'rechaza cambiar el tipo a %s',
+    async (type) => {
+      await expect(parseBody({ type })).rejects.toMatchObject({
+        response: {
+          message: [
+            'LOAN_GIVEN and LOAN_REPAYMENT movements are created from /loans',
+          ],
+        },
+      });
+    },
+  );
+
+  it('acepta los demás tipos', async () => {
+    const dto = await parseBody({ type: 'INCOME' });
+    expect(dto.type).toBe('INCOME');
+  });
+});

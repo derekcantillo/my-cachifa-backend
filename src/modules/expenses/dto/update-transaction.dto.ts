@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsEnum,
   IsNotEmpty,
+  IsNotIn,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -13,6 +14,10 @@ import {
   MaxLength,
 } from 'class-validator';
 import { MONTH_YEAR_MESSAGE, MONTH_YEAR_REGEX } from '@common/utils/month.util';
+import {
+  LOAN_MOVEMENT_TYPE_MESSAGE,
+  LOAN_MOVEMENT_TYPES,
+} from '../loan-movement-types';
 
 /**
  * Todos los campos son opcionales. `accountId` y `recurringExpenseId` aceptan
@@ -27,6 +32,7 @@ export class UpdateTransactionDto {
 
   @IsOptional()
   @IsEnum(TransactionType)
+  @IsNotIn(LOAN_MOVEMENT_TYPES, { message: LOAN_MOVEMENT_TYPE_MESSAGE })
   type?: TransactionType;
 
   @IsOptional()
