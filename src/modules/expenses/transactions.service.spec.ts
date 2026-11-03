@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Category, Prisma, TransactionType } from '@prisma/client';
 import type { CurrentUserService } from '@common/services/current-user.service';
 import type { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
@@ -53,9 +53,12 @@ function setup(
   const recurringExpenseFindFirst = jest
     .fn()
     .mockResolvedValue(recurringExpense);
+  const transactionDelete = jest.fn().mockResolvedValue(existing);
   const recalculateFrom = jest.fn().mockResolvedValue(undefined);
 
-  const tx = { transaction: { update: transactionUpdate } };
+  const tx = {
+    transaction: { update: transactionUpdate, delete: transactionDelete },
+  };
   const prisma = {
     transaction: { findFirst: jest.fn().mockResolvedValue(existing) },
     recurringExpense: { findFirst: recurringExpenseFindFirst },
@@ -86,6 +89,7 @@ function setup(
   return {
     service,
     transactionUpdate,
+    transactionDelete,
     recurringExpenseFindFirst,
     recalculateFrom,
     updateData,
@@ -193,5 +197,74 @@ describe('TransactionsService.update — cambio de categoría con vínculo exist
     await service.update('tx_1', { category: Category.FOOD });
 
     expect(recurringExpenseFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('TransactionsService — movimientos de préstamo', () => {
+  const loanMovements: [string, Partial<TransactionWithAccount>][] = [
+    [
+      'LOAN_GIVEN',
+      {
+        type: TransactionType.LOAN_GIVEN,
+        category: Category.LOAN,
+        loanId: 'loan_1',
+      },
+    ],
+    [
+      'LOAN_REPAYMENT',
+      {
+        type: TransactionType.LOAN_REPAYMENT,
+        category: Category.LOAN,
+        loanId: 'loan_1',
+      },
+    ],
+    ['con loanId aunque el tipo no sea de préstamo', { loanId: 'loan_1' }],
+    [
+      'de tipo préstamo aunque no tenga loanId',
+      { type: TransactionType.LOAN_GIVEN, category: Category.LOAN },
+    ],
+  ];
+
+  it.each(loanMovements)(
+    'PATCH rechaza con 409 un movimiento %s',
+    async (_label, overrides) => {
+      const { service, transactionUpdate, recalculateFrom } = setup(
+        transaction(overrides),
+      );
+
+      const update = service.update('tx_1', { description: 'Otro' });
+
+      await expect(update).rejects.toBeInstanceOf(ConflictException);
+      await expect(update).rejects.toThrow(
+        'Loan movements are managed from /loans',
+      );
+      expect(transactionUpdate).not.toHaveBeenCalled();
+      expect(recalculateFrom).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(loanMovements)(
+    'DELETE rechaza con 409 un movimiento %s',
+    async (_label, overrides) => {
+      const { service, transactionDelete, recalculateFrom } = setup(
+        transaction(overrides),
+      );
+
+      await expect(service.remove('tx_1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(transactionDelete).not.toHaveBeenCalled();
+      expect(recalculateFrom).not.toHaveBeenCalled();
+    },
+  );
+
+  it('DELETE sigue borrando una transacción normal', async () => {
+    const { service, transactionDelete, recalculateFrom } =
+      setup(transaction());
+
+    await service.remove('tx_1');
+
+    expect(transactionDelete).toHaveBeenCalledWith({ where: { id: 'tx_1' } });
+    expect(recalculateFrom).toHaveBeenCalledTimes(1);
   });
 });

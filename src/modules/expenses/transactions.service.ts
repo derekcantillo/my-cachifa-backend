@@ -1,9 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type Category } from '@prisma/client';
+import { Prisma, TransactionType, type Category } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { toMonthYear } from '@common/utils/month.util';
@@ -21,6 +22,11 @@ import {
   type ITransactionResponse,
   type TransactionWithAccount,
 } from './interfaces/transaction-response.interface';
+
+const LOAN_MOVEMENT_TYPES: TransactionType[] = [
+  TransactionType.LOAN_GIVEN,
+  TransactionType.LOAN_REPAYMENT,
+];
 
 const LINKED_CATEGORY_CHANGE_HINT =
   'Send recurringExpenseId: null to unlink it, or the id of a recurring expense in the new category.';
@@ -112,6 +118,7 @@ export class TransactionsService {
   ): Promise<ITransactionResponse> {
     const userId = await this.currentUser.getUserId();
     const existing = await this.findOwned(id, userId);
+    this.assertNotLoanMovement(existing);
 
     if (dto.accountId !== undefined) {
       await this.assertAccountOwnership(dto.accountId, userId);
@@ -200,6 +207,7 @@ export class TransactionsService {
   async remove(id: string): Promise<void> {
     const userId = await this.currentUser.getUserId();
     const existing = await this.findOwned(id, userId);
+    this.assertNotLoanMovement(existing);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.transaction.delete({ where: { id } });
@@ -233,6 +241,20 @@ export class TransactionsService {
     }
 
     return transaction;
+  }
+
+  /**
+   * Los movimientos de un préstamo (`LOAN_GIVEN` y abonos) se mantienen junto
+   * con el `Loan` desde `/loans`; editarlos o borrarlos aquí dejaría el
+   * préstamo descuadrado.
+   */
+  private assertNotLoanMovement(transaction: TransactionWithAccount): void {
+    if (
+      transaction.loanId !== null ||
+      LOAN_MOVEMENT_TYPES.includes(transaction.type)
+    ) {
+      throw new ConflictException('Loan movements are managed from /loans');
+    }
   }
 
   private async assertAccountOwnership(
