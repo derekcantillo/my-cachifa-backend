@@ -19,6 +19,10 @@ import {
   LOAN_MOVEMENT_TYPE_MESSAGE,
   LOAN_MOVEMENT_TYPES,
 } from '../loan-movement-types';
+import {
+  INSTALLMENT_MOVEMENT_TYPE_MESSAGE,
+  INSTALLMENT_MOVEMENT_TYPES,
+} from '../installment-movement-types';
 
 export class CreateTransactionDto {
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -27,6 +31,9 @@ export class CreateTransactionDto {
 
   @IsEnum(TransactionType)
   @IsNotIn(LOAN_MOVEMENT_TYPES, { message: LOAN_MOVEMENT_TYPE_MESSAGE })
+  @IsNotIn(INSTALLMENT_MOVEMENT_TYPES, {
+    message: INSTALLMENT_MOVEMENT_TYPE_MESSAGE,
+  })
   type!: TransactionType;
 
   /**

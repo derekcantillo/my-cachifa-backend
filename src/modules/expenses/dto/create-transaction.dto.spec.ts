@@ -31,6 +31,16 @@ describe('CreateTransactionDto — type', () => {
     },
   );
 
+  it('rechaza crear un FINANCED_PURCHASE: nace con su plan de cuotas', async () => {
+    await expect(
+      parseBody({ ...VALID, type: 'FINANCED_PURCHASE' }),
+    ).rejects.toMatchObject({
+      response: {
+        message: ['Financed purchases are created from /installment-plans'],
+      },
+    });
+  });
+
   it.each(['EXPENSE', 'INCOME', 'SAVING', 'DEBT_PAYMENT'])(
     'acepta %s',
     async (type) => {

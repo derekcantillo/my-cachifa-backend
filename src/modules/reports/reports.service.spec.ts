@@ -17,12 +17,14 @@ type TypeFilter =
   | TransactionType
   | { in: TransactionType[] }
   | { not: TransactionType }
+  | { notIn: TransactionType[] }
   | undefined;
 
 function typeMatches(type: TransactionType, filter: TypeFilter): boolean {
   if (filter === undefined) return true;
   if (typeof filter === 'string') return type === filter;
   if ('in' in filter) return filter.in.includes(type);
+  if ('notIn' in filter) return !filter.notIn.includes(type);
   return type !== filter.not;
 }
 
@@ -150,6 +152,28 @@ describe('ReportsService — las transferencias no cuentan', () => {
     expect(
       distribution.reduce((sum, item) => sum + item.percentage, 0),
     ).toBeCloseTo(100, 0);
+  });
+
+  it('una compra a cuotas (FINANCED_PURCHASE) tampoco: su gasto son las cuotas', async () => {
+    const financed = (amount: number) => ({
+      type: TransactionType.FINANCED_PURCHASE,
+      category: Category.PERSONAL,
+      amount,
+    });
+    const { service } = setup([
+      ...ROWS,
+      financed(6_999_000),
+      financed(1_605_708),
+      financed(93_900),
+    ]);
+
+    const summary = await service.getSummary(PERIOD_ID);
+
+    expect(summary.biggestExpense?.category).toBe(Category.FOOD);
+    expect(summary.mostFrequentCategory).toEqual({
+      category: Category.FOOD,
+      count: 2,
+    });
   });
 
   it('proyección de ahorro: sale de los aportes a metas, no de transacciones', async () => {

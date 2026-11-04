@@ -17,6 +17,10 @@ import { CASCADE_TRANSACTION_OPTIONS } from '@modules/period-ledger/period-ledge
 import { PrismaService } from '@modules/prisma/prisma.service';
 import type { CreateTransactionDto } from './dto/create-transaction.dto';
 import type { UpdateTransactionDto } from './dto/update-transaction.dto';
+import {
+  INSTALLMENT_MOVEMENT_LOCKED_MESSAGE,
+  INSTALLMENT_MOVEMENT_TYPES,
+} from './installment-movement-types';
 import { LOAN_MOVEMENT_TYPES } from './loan-movement-types';
 import {
   TRANSACTION_ACCOUNTS_INCLUDE,
@@ -140,6 +144,7 @@ export class TransactionsService {
     const userId = await this.currentUser.getUserId();
     const existing = await this.findOwned(id, userId);
     this.assertNotLoanMovement(existing);
+    this.assertNotInstallmentMovement(existing);
 
     const transfer = isTransfer(existing.type);
     if (dto.type !== undefined && isTransfer(dto.type) !== transfer) {
@@ -251,6 +256,7 @@ export class TransactionsService {
     const userId = await this.currentUser.getUserId();
     const existing = await this.findOwned(id, userId);
     this.assertNotLoanMovement(existing);
+    this.assertNotInstallmentMovement(existing);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.transaction.delete({ where: { id } });
@@ -297,6 +303,22 @@ export class TransactionsService {
       LOAN_MOVEMENT_TYPES.includes(transaction.type)
     ) {
       throw new ConflictException('Loan movements are managed from /loans');
+    }
+  }
+
+  /**
+   * La compra a cuotas (`FINANCED_PURCHASE`) y sus cuotas reconocidas se
+   * mantienen junto con su plan desde `/installment-plans`: editarlas aquí
+   * descuadraría la deuda de la tarjeta o el calendario de cuotas.
+   */
+  private assertNotInstallmentMovement(
+    transaction: TransactionWithAccount,
+  ): void {
+    if (
+      transaction.installmentPlanId !== null ||
+      INSTALLMENT_MOVEMENT_TYPES.includes(transaction.type)
+    ) {
+      throw new ConflictException(INSTALLMENT_MOVEMENT_LOCKED_MESSAGE);
     }
   }
 

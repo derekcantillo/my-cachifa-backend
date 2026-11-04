@@ -71,7 +71,7 @@ WITH "card_anchor" AS (
                WHEN "t"."to_account_id" = "c"."id" AND "t"."type" = 'TRANSFER' THEN "t"."amount"
                WHEN "t"."account_id" = "c"."id" AND "t"."type" IN ('INCOME', 'LOAN_REPAYMENT') THEN "t"."amount"
                WHEN "t"."account_id" = "c"."id"
-                    AND "t"."type" IN ('EXPENSE', 'SAVING', 'DEBT_PAYMENT', 'LOAN_GIVEN', 'TRANSFER') THEN -"t"."amount"
+                    AND "t"."type" IN ('EXPENSE', 'SAVING', 'DEBT_PAYMENT', 'LOAN_GIVEN', 'TRANSFER', 'FINANCED_PURCHASE') THEN -"t"."amount"
                ELSE 0
              END), 0) AS "efecto"
     FROM "card_anchor" AS "c"

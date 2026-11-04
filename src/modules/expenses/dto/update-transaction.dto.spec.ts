@@ -54,3 +54,15 @@ describe('UpdateTransactionDto — type', () => {
     expect(dto.type).toBe('INCOME');
   });
 });
+
+describe('UpdateTransactionDto — FINANCED_PURCHASE', () => {
+  it('rechaza convertir un movimiento en compra a cuotas', async () => {
+    await expect(
+      parseBody({ type: 'FINANCED_PURCHASE' }),
+    ).rejects.toMatchObject({
+      response: {
+        message: ['Financed purchases are created from /installment-plans'],
+      },
+    });
+  });
+});

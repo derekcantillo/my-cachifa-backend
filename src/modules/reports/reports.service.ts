@@ -50,14 +50,20 @@ export class ReportsService {
             },
           },
         }),
-        // Cuenta todos los tipos salvo `TRANSFER`, que no tiene categoría
-        // real (se guarda `OTHER`) y no es un movimiento de gasto ni ingreso.
+        // Cuenta todos los tipos salvo `TRANSFER` (no tiene categoría real,
+        // se guarda `OTHER`) y `FINANCED_PURCHASE` (la deuda de una compra a
+        // cuotas: su gasto son las cuotas, que sí cuentan).
         this.prisma.transaction.groupBy({
           by: ['category'],
           where: {
             userId,
             periodId: period.id,
-            type: { not: TransactionType.TRANSFER },
+            type: {
+              notIn: [
+                TransactionType.TRANSFER,
+                TransactionType.FINANCED_PURCHASE,
+              ],
+            },
           },
           _count: { category: true },
           orderBy: { _count: { category: 'desc' } },

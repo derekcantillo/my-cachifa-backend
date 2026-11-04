@@ -299,6 +299,51 @@ describe('TransactionsService — movimientos de préstamo', () => {
   });
 });
 
+describe('TransactionsService — movimientos de planes de cuotas', () => {
+  const installmentMovements: [string, Partial<TransactionWithAccount>][] = [
+    [
+      'FINANCED_PURCHASE',
+      {
+        type: TransactionType.FINANCED_PURCHASE,
+        accountId: CARD,
+        installmentPlanId: 'plan_1',
+      },
+    ],
+    ['cuota reconocida', { installmentPlanId: 'plan_1', installmentNumber: 9 }],
+    ['FINANCED_PURCHASE sin plan', { type: TransactionType.FINANCED_PURCHASE }],
+  ];
+
+  it.each(installmentMovements)(
+    'PATCH rechaza con 409 un movimiento %s',
+    async (_label, overrides) => {
+      const { service, transactionUpdate, recalculateFrom } = setup(
+        transaction(overrides),
+      );
+
+      const update = service.update('tx_1', { amount: 1 });
+
+      await expect(update).rejects.toBeInstanceOf(ConflictException);
+      await expect(update).rejects.toThrow(
+        'Installment movements are managed from /installment-plans',
+      );
+      expect(transactionUpdate).not.toHaveBeenCalled();
+      expect(recalculateFrom).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(installmentMovements)(
+    'DELETE rechaza con 409 un movimiento %s',
+    async (_label, overrides) => {
+      const { service, transactionDelete } = setup(transaction(overrides));
+
+      await expect(service.remove('tx_1')).rejects.toThrow(
+        'Installment movements are managed from /installment-plans',
+      );
+      expect(transactionDelete).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('TransactionsService — transferencias (TRANSFER)', () => {
   const transferDto = (
     overrides: Partial<CreateTransactionDto> = {},

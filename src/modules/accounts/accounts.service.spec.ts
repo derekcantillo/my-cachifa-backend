@@ -215,6 +215,22 @@ describe('AccountsService — saldos', () => {
     expect(balances.visa).toBe(-1_000_000 - 200_000 + 838_675);
   });
 
+  it('una compra a cuotas (FINANCED_PURCHASE) baja la tarjeta por el monto completo', async () => {
+    const accounts = [
+      account('visa', AccountType.CREDIT_CARD, -4_539_024),
+      account('savings', AccountType.SAVINGS_ACCOUNT, 1_000_000),
+    ];
+    const balances = await balancesById(
+      setup(accounts, [
+        tx(TransactionType.FINANCED_PURCHASE, 3_600_000, 'visa'),
+        // A recognized installment has no account: it moves no balance.
+        tx(TransactionType.EXPENSE, 100_000, null),
+      ]),
+    );
+
+    expect(balances).toEqual({ visa: -8_139_024, savings: 1_000_000 });
+  });
+
   it('cada lado respeta la fecha de su propio saldo inicial', async () => {
     const accounts = [
       account('savings', AccountType.SAVINGS_ACCOUNT, 1_000_000, ANCHOR),

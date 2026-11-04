@@ -71,7 +71,8 @@ const BALANCE_INCREASING_TYPES: TransactionType[] = [
 
 /**
  * Restan del saldo de la cuenta (`accountId`) — el ahorro también, porque sale
- * de aquí hacia la meta, y una `TRANSFER` desde su origen.
+ * de aquí hacia la meta, una `TRANSFER` desde su origen, y una compra a cuotas
+ * (`FINANCED_PURCHASE`) de la tarjeta por el monto completo, como el banco.
  */
 const BALANCE_DECREASING_TYPES: TransactionType[] = [
   TransactionType.EXPENSE,
@@ -79,6 +80,7 @@ const BALANCE_DECREASING_TYPES: TransactionType[] = [
   TransactionType.DEBT_PAYMENT,
   TransactionType.LOAN_GIVEN,
   TransactionType.TRANSFER,
+  TransactionType.FINANCED_PURCHASE,
 ];
 
 @Injectable()

@@ -38,6 +38,10 @@ export interface ITransactionResponse {
   toAccount: IAccountSummaryResponse | null;
   recurringExpenseId: string | null;
   loanId: string | null;
+  /** Plan de cuotas: su `FINANCED_PURCHASE` o una cuota reconocida. Solo se edita desde `/installment-plans`. */
+  installmentPlanId: string | null;
+  /** Número de la cuota reconocida; `null` en el `FINANCED_PURCHASE` y fuera de planes. */
+  installmentNumber: number | null;
   transactionDate: string;
   periodId: string | null;
   /** @deprecated Usar `periodId`. `YYYY-MM` (hora de Bogotá) de `transactionDate`. */
@@ -68,6 +72,8 @@ export function toTransactionResponse(
       : null,
     recurringExpenseId: transaction.recurringExpenseId,
     loanId: transaction.loanId,
+    installmentPlanId: transaction.installmentPlanId,
+    installmentNumber: transaction.installmentNumber,
     transactionDate: transaction.transactionDate.toISOString(),
     periodId: transaction.periodId,
     monthYear: transaction.monthYear,
