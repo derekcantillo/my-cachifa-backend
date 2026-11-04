@@ -144,6 +144,7 @@ function fakeClient(rows: Row[]) {
         ]),
     },
     goal: { findMany: jest.fn().mockResolvedValue([]) },
+    installmentPlan: { findMany: jest.fn().mockResolvedValue([]) },
     user: {
       findUniqueOrThrow: jest.fn().mockResolvedValue({
         id: USER_ID,

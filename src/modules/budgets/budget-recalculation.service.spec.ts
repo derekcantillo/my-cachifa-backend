@@ -75,6 +75,7 @@ function mockClient(goals: Goal[]) {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     transaction: { groupBy: jest.fn().mockResolvedValue([]) },
+    installmentPlan: { findMany: jest.fn().mockResolvedValue([]) },
   };
 
   return {

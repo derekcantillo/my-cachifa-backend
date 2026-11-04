@@ -258,3 +258,46 @@ export function periodRangeEnd(
 export function inRange(instant: Date, start: Date, end: Date): boolean {
   return instant >= start && instant < end;
 }
+
+/** Lo que un plan necesita para saber qué cuotas caen en un período. */
+export interface PlanCharges {
+  terms: PlanTerms;
+  /** `null` si la tarjeta perdió sus días: solo cuentan las cuotas ya reconocidas. */
+  cycle: CardCycle | null;
+  state: PlanState;
+  recognized: readonly RecognizedInstallment[];
+}
+
+/**
+ * Capital de cuotas del plan que cae en `[start, end)` para la base del
+ * presupuesto (D.4), registradas o no: las reconocidas por la fecha de su
+ * gasto (la liquidación incluida), las demás por su fecha de pago. Las
+ * anteriores a `billedBeforeTracking` y las que cubrió una liquidación no
+ * cuentan.
+ */
+export function installmentChargesInRange(
+  plan: PlanCharges,
+  start: Date,
+  end: Date,
+): Prisma.Decimal {
+  if (!plan.state.recognizeInstallments) return ZERO;
+  let total = ZERO;
+  for (const record of plan.recognized) {
+    if (inRange(record.transactionDate, start, end)) {
+      total = total.plus(record.amount);
+    }
+  }
+  if (!plan.cycle || plan.state.status === 'SETTLED') return total;
+
+  const recognized = new Set(plan.recognized.map(({ number }) => number));
+  for (const installment of buildSchedule(plan.terms, plan.cycle)) {
+    if (
+      installment.number > plan.state.billedBeforeTracking &&
+      !recognized.has(installment.number) &&
+      inRange(financialNoon(installment.dueDate), start, end)
+    ) {
+      total = total.plus(installment.principal);
+    }
+  }
+  return total;
+}

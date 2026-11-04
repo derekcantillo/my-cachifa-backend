@@ -13,6 +13,11 @@ import { AlertsService } from '@modules/alerts/alerts.service';
 import { formatCOP } from '@common/utils/currency.util';
 import { FinancialPeriodService } from '@modules/financial-periods/financial-period.service';
 import { calculateGoalPlan } from '@modules/goals/lib/goal-plan';
+import {
+  fromDbDate,
+  installmentChargesInRange,
+  periodRangeEnd,
+} from '@modules/installment-plans/lib/installment-schedule';
 import { PeriodLedgerService } from '@modules/period-ledger/period-ledger.service';
 
 const ZERO = new Prisma.Decimal(0);
@@ -64,12 +69,16 @@ export class BudgetRecalculationService {
 
   /**
    * a. Base del período = `openingBalance` (rollover) + ingreso del período
-   *    − compromisos fijos (`RecurringExpense` activos). El gasto ya
-   *    ejecutado NO la reduce: por eso nunca se usa `closingBalance`.
+   *    − compromisos fijos (`RecurringExpense` activos) − cuotas de tarjeta
+   *    que vencen en el período (planes que cuentan sus cuotas como gasto,
+   *    registradas o no). El gasto ya ejecutado NO la reduce: por eso nunca
+   *    se usa `closingBalance`.
    * b. Cada categoría con `RecurringExpense` activo fija su límite en la
    *    suma de sus `estimatedAmount` (ej. HOUSING = arriendo + servicios),
    *    con precedencia sobre cualquier `BudgetRule` de la misma categoría.
    * c. El resto de categorías con `BudgetRule` = max(0, base) × porcentaje.
+   *    A cada categoría se le suman además sus cuotas del período (la de la
+   *    compra), como un gasto fijo más.
    *    Si la base es negativa (arrastre de déficit) esos límites quedan en 0
    *    y, en el período en curso, se registra una alerta `PERIOD_DEFICIT`.
    * d. `spentAmount` se recalcula de las transacciones del período.
@@ -82,13 +91,14 @@ export class BudgetRecalculationService {
     period: FinancialPeriod,
     ledger?: PeriodLedger,
   ): Promise<void> {
-    const [periodLedger, recurringExpenses, rules, goals, user] =
+    const [periodLedger, recurringExpenses, rules, goals, user, installments] =
       await Promise.all([
         ledger ?? this.periodLedger.getOrBuildLedger(client, userId, period),
         client.recurringExpense.findMany({ where: { userId, active: true } }),
         client.budgetRule.findMany({ where: { userId } }),
         client.goal.findMany({ where: { userId, status: GoalStatus.ACTIVE } }),
         client.user.findUniqueOrThrow({ where: { id: userId } }),
+        this.installmentsByCategory(client, userId, period),
       ]);
 
     const fixedByCategory = new Map<Category, Prisma.Decimal>();
@@ -105,9 +115,15 @@ export class BudgetRecalculationService {
       ZERO,
     );
 
+    const installmentCommitments = [...installments.values()].reduce(
+      (sum, amount) => sum.plus(amount),
+      ZERO,
+    );
+
     const budgetBase = periodLedger.openingBalance
       .plus(periodLedger.income)
-      .minus(fixedCommitments);
+      .minus(fixedCommitments)
+      .minus(installmentCommitments);
     const distributable = Prisma.Decimal.max(ZERO, budgetBase);
 
     const limits = new Map<Category, Prisma.Decimal>(fixedByCategory);
@@ -117,6 +133,9 @@ export class BudgetRecalculationService {
         rule.category,
         distributable.times(rule.targetPercentage).div(100),
       );
+    }
+    for (const [category, amount] of installments) {
+      limits.set(category, (limits.get(category) ?? ZERO).plus(amount));
     }
 
     for (const [category, limitAmount] of limits) {
@@ -147,7 +166,7 @@ export class BudgetRecalculationService {
         AlertType.PERIOD_DEFICIT,
         period.id,
         `El período ${period.label} arranca en déficit: saldo anterior más ` +
-          `ingresos menos gastos fijos da ${formatCOP(budgetBase.toNumber())}. ` +
+          `ingresos menos gastos fijos y cuotas da ${formatCOP(budgetBase.toNumber())}. ` +
           `Los presupuestos por porcentaje quedan en $ 0 hasta cubrirlo.`,
       );
     }
@@ -207,6 +226,67 @@ export class BudgetRecalculationService {
       },
       data: { spentAmount: 0 },
     });
+  }
+
+  /**
+   * Capital de las cuotas de tarjeta del período por categoría (la de la
+   * compra). Fin del período abierto: ver `periodRangeEnd`.
+   */
+  private async installmentsByCategory(
+    client: Prisma.TransactionClient,
+    userId: string,
+    period: FinancialPeriod,
+  ): Promise<Map<Category, Prisma.Decimal>> {
+    const plans = await client.installmentPlan.findMany({
+      where: { userId, recognizeInstallments: true },
+      include: {
+        account: { select: { statementDay: true, paymentDueDay: true } },
+        transactions: {
+          where: { installmentNumber: { not: null } },
+          select: {
+            id: true,
+            installmentNumber: true,
+            amount: true,
+            transactionDate: true,
+          },
+        },
+      },
+    });
+    const end = periodRangeEnd(period, new Date());
+    const byCategory = new Map<Category, Prisma.Decimal>();
+    for (const plan of plans) {
+      if (!plan.category) continue;
+      const { statementDay, paymentDueDay } = plan.account;
+      const amount = installmentChargesInRange(
+        {
+          terms: {
+            principal: plan.principal,
+            installmentCount: plan.installmentCount,
+            monthlyRate: plan.monthlyRate,
+            firstStatementDate: fromDbDate(plan.firstStatementDate),
+          },
+          cycle:
+            statementDay === null || paymentDueDay === null
+              ? null
+              : { statementDay, paymentDueDay },
+          state: plan,
+          recognized: plan.transactions.map((item) => ({
+            number: item.installmentNumber!,
+            transactionId: item.id,
+            amount: item.amount,
+            transactionDate: item.transactionDate,
+          })),
+        },
+        period.startDate,
+        end,
+      );
+      if (amount.isZero()) continue;
+      byCategory.set(
+        plan.category,
+        (byCategory.get(plan.category) ?? ZERO).plus(amount),
+      );
+    }
+    return byCategory;
   }
 
   /** Aporte mensual que exigen las metas activas, vs. el pool de ahorro recomendado. */
