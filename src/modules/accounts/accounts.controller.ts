@@ -10,6 +10,7 @@ import {
 import { ApiKeyGuard } from '@common/guards/api-key.guard';
 import { AccountsService } from './accounts.service';
 import { CreateAccountDto } from './dto/create-account.dto';
+import { UpdateAccountDto } from './dto/update-account.dto';
 import { UpdateInitialBalanceDto } from './dto/update-initial-balance.dto';
 import type { IAccountResponse } from './interfaces/account-response.interface';
 
@@ -26,6 +27,14 @@ export class AccountsController {
   @Post()
   create(@Body() dto: CreateAccountDto): Promise<IAccountResponse> {
     return this.accountsService.create(dto);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateAccountDto,
+  ): Promise<IAccountResponse> {
+    return this.accountsService.update(id, dto);
   }
 
   @Patch(':id/initial-balance')

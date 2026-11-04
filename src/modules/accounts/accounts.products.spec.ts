@@ -10,6 +10,7 @@ import type { PrismaService } from '@modules/prisma/prisma.service';
 import {
   AccountsService,
   CARD_LAST4_WITHOUT_CARD_MESSAGE,
+  CREDIT_CARD_TYPE_CHANGE_MESSAGE,
   DEBIT_CARD_NOT_ALLOWED_MESSAGE,
 } from './accounts.service';
 import type { CreateAccountDto } from './dto/create-account.dto';
@@ -95,7 +96,13 @@ function setup(
           data: Partial<Account>;
         }) => {
           const row = rows.find((r) => r.id === where.id)!;
-          Object.assign(row, data);
+          // Like Prisma: `undefined` leaves the column alone, `null` clears it.
+          Object.assign(
+            row,
+            Object.fromEntries(
+              Object.entries(data).filter(([, value]) => value !== undefined),
+            ),
+          );
           return Promise.resolve(withInstitution(row));
         },
       ),
@@ -222,5 +229,166 @@ describe('AccountsService — crear un producto', () => {
     await expect(service.create(create({ cardLast4: '1234' }))).rejects.toThrow(
       CARD_LAST4_WITHOUT_CARD_MESSAGE,
     );
+  });
+});
+
+describe('AccountsService — editar un producto (PATCH /accounts/:id)', () => {
+  it('reclasifica Ahorros Bancolombia: DEBIT_CARD → ahorros con tarjeta débito y entidad', async () => {
+    const { service, prisma } = setup(
+      [
+        stored({
+          id: 'ahorros',
+          name: 'Ahorros Bancolombia',
+          type: AccountType.DEBIT_CARD,
+          initialBalance: new Prisma.Decimal(5_199_379.32),
+        }),
+      ],
+      { ahorros: 164 },
+    );
+
+    const result = await service.update('ahorros', {
+      type: AccountType.SAVINGS_ACCOUNT,
+      hasDebitCard: true,
+      cardLast4: '1234',
+      institutionId: 'bancolombia',
+    });
+
+    expect(result).toMatchObject({
+      name: 'Ahorros Bancolombia',
+      type: AccountType.SAVINGS_ACCOUNT,
+      hasDebitCard: true,
+      cardLast4: '1234',
+      institution: { id: 'bancolombia', name: 'Bancolombia' },
+      initialBalance: 5_199_379.32,
+    });
+    // Between non-card types the movements are not even counted.
+    expect(prisma.transaction.count).not.toHaveBeenCalled();
+  });
+
+  it('solo cambia lo que llega: renombrar una cuenta vieja DEBIT_CARD la deja como está', async () => {
+    const { service } = setup([
+      stored({ id: 'ahorros', type: AccountType.DEBIT_CARD, cardLast4: null }),
+    ]);
+
+    const result = await service.update('ahorros', { name: 'Ahorros' });
+
+    expect(result).toMatchObject({
+      name: 'Ahorros',
+      type: AccountType.DEBIT_CARD,
+      hasDebitCard: false,
+      institution: null,
+    });
+  });
+
+  it('institutionId = null desliga la cuenta de su entidad', async () => {
+    const { service } = setup([
+      stored({ id: 'nequi', institutionId: 'bancolombia' }),
+    ]);
+
+    const result = await service.update('nequi', { institutionId: null });
+
+    expect(result.institution).toBeNull();
+  });
+
+  it('rechaza una entidad de otro usuario (400)', async () => {
+    const { service, prisma } = setup([stored({ id: 'nequi' })]);
+
+    await expect(
+      service.update('nequi', { institutionId: 'other_bank' }),
+    ).rejects.toThrow('Institution other_bank not found');
+    expect(prisma.account.update).not.toHaveBeenCalled();
+  });
+
+  it('una cuenta de otro usuario no existe (404)', async () => {
+    const { service } = setup([stored({ id: 'ajena', userId: 'user_2' })]);
+
+    await expect(service.update('ajena', { name: 'X' })).rejects.toThrow(
+      'Account ajena not found',
+    );
+  });
+
+  it.each([
+    [AccountType.CREDIT_CARD, AccountType.SAVINGS_ACCOUNT],
+    [AccountType.SAVINGS_ACCOUNT, AccountType.CREDIT_CARD],
+    [AccountType.DEBIT_CARD, AccountType.CREDIT_CARD],
+  ])('con movimientos, rechaza pasar de %s a %s (400)', async (from, to) => {
+    const { service, prisma } = setup([stored({ id: 'acc', type: from })], {
+      acc: 6,
+    });
+
+    const call = service.update('acc', { type: to });
+
+    await expect(call).rejects.toBeInstanceOf(BadRequestException);
+    await expect(call).rejects.toThrow(CREDIT_CARD_TYPE_CHANGE_MESSAGE);
+    expect(prisma.account.update).not.toHaveBeenCalled();
+  });
+
+  it('cuenta los movimientos como origen y como destino de una transferencia', async () => {
+    const { service, prisma } = setup([stored({ id: 'acc' })]);
+
+    await service.update('acc', { type: AccountType.CREDIT_CARD });
+
+    expect(prisma.transaction.count).toHaveBeenCalledWith({
+      where: { OR: [{ accountId: 'acc' }, { toAccountId: 'acc' }] },
+    });
+  });
+
+  it('sin movimientos, una cuenta puede pasar a tarjeta de crédito y volver', async () => {
+    const { service } = setup([stored({ id: 'acc' })]);
+
+    await expect(
+      service.update('acc', { type: AccountType.CREDIT_CARD }),
+    ).resolves.toMatchObject({ type: AccountType.CREDIT_CARD });
+    await expect(
+      service.update('acc', { type: AccountType.DIGITAL_WALLET }),
+    ).resolves.toMatchObject({ type: AccountType.DIGITAL_WALLET });
+  });
+
+  it('con movimientos, cambiar entre tipos que no son tarjeta sí se puede', async () => {
+    const { service } = setup(
+      [stored({ id: 'nequi', type: AccountType.SAVINGS_ACCOUNT })],
+      { nequi: 12 },
+    );
+
+    await expect(
+      service.update('nequi', { type: AccountType.DIGITAL_WALLET }),
+    ).resolves.toMatchObject({ type: AccountType.DIGITAL_WALLET });
+  });
+
+  it('rechaza poner tarjeta débito en una tarjeta de crédito (400)', async () => {
+    const { service } = setup([
+      stored({ id: 'visa', type: AccountType.CREDIT_CARD }),
+    ]);
+
+    await expect(
+      service.update('visa', { hasDebitCard: true }),
+    ).rejects.toThrow(DEBIT_CARD_NOT_ALLOWED_MESSAGE);
+  });
+
+  it('valida el estado final: pasar a CREDIT_CARD exige quitar la tarjeta débito', async () => {
+    const { service } = setup([stored({ id: 'acc', hasDebitCard: true })]);
+
+    await expect(
+      service.update('acc', { type: AccountType.CREDIT_CARD }),
+    ).rejects.toThrow(DEBIT_CARD_NOT_ALLOWED_MESSAGE);
+    await expect(
+      service.update('acc', {
+        type: AccountType.CREDIT_CARD,
+        hasDebitCard: false,
+      }),
+    ).resolves.toMatchObject({ type: AccountType.CREDIT_CARD });
+  });
+
+  it('quitar la tarjeta débito exige borrar también sus dígitos', async () => {
+    const { service } = setup([
+      stored({ id: 'acc', hasDebitCard: true, cardLast4: '1234' }),
+    ]);
+
+    await expect(
+      service.update('acc', { hasDebitCard: false }),
+    ).rejects.toThrow(CARD_LAST4_WITHOUT_CARD_MESSAGE);
+    await expect(
+      service.update('acc', { hasDebitCard: false, cardLast4: null }),
+    ).resolves.toMatchObject({ hasDebitCard: false, cardLast4: null });
   });
 });

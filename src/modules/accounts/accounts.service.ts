@@ -8,6 +8,7 @@ import { CurrentUserService } from '@common/services/current-user.service';
 import { PrismaService } from '@modules/prisma/prisma.service';
 import { DEBIT_CARD_HOLDER_TYPES } from './account-types';
 import type { CreateAccountDto } from './dto/create-account.dto';
+import type { UpdateAccountDto } from './dto/update-account.dto';
 import type { UpdateInitialBalanceDto } from './dto/update-initial-balance.dto';
 import {
   ACCOUNT_INCLUDE,
@@ -19,6 +20,9 @@ const ZERO = new Prisma.Decimal(0);
 
 export const DEBIT_CARD_NOT_ALLOWED_MESSAGE =
   'hasDebitCard is only allowed on SAVINGS_ACCOUNT, CHECKING_ACCOUNT and DIGITAL_WALLET accounts';
+
+export const CREDIT_CARD_TYPE_CHANGE_MESSAGE =
+  'An account with movements cannot change to or from CREDIT_CARD: the sign of its balance would change meaning';
 
 export const CARD_LAST4_WITHOUT_CARD_MESSAGE =
   'cardLast4 needs a card: a CREDIT_CARD, or an account with hasDebitCard';
@@ -104,6 +108,42 @@ export class AccountsService {
     );
   }
 
+  async update(id: string, dto: UpdateAccountDto): Promise<IAccountResponse> {
+    const userId = await this.currentUser.getUserId();
+    const existing = await this.findOwned(id, userId);
+
+    this.assertProductFields({
+      type: dto.type ?? existing.type,
+      hasDebitCard: dto.hasDebitCard ?? existing.hasDebitCard,
+      cardLast4:
+        dto.cardLast4 === undefined ? existing.cardLast4 : dto.cardLast4,
+    });
+    if (dto.type !== undefined && dto.type !== existing.type) {
+      await this.assertTypeChangeAllowed(existing, dto.type);
+    }
+    if (dto.institutionId) {
+      await this.assertInstitutionOwned(dto.institutionId, userId);
+    }
+
+    // `undefined` = no tocar; `null` en institutionId/cardLast4 = borrar.
+    const account = await this.prisma.account.update({
+      where: { id },
+      data: {
+        name: dto.name,
+        type: dto.type,
+        institutionId: dto.institutionId,
+        hasDebitCard: dto.hasDebitCard,
+        cardLast4: dto.cardLast4,
+      },
+      include: ACCOUNT_INCLUDE,
+    });
+
+    return toAccountResponse(
+      account,
+      await this.computeCurrentBalance(account),
+    );
+  }
+
   async updateInitialBalance(
     id: string,
     dto: UpdateInitialBalanceDto,
@@ -170,6 +210,27 @@ export class AccountsService {
       !product.hasDebitCard
     ) {
       throw new BadRequestException(CARD_LAST4_WITHOUT_CARD_MESSAGE);
+    }
+  }
+
+  /**
+   * En una tarjeta el saldo negativo es deuda; en las demás, plata que falta.
+   * Con movimientos, cambiar de un lado al otro reinterpretaría todo su
+   * historial, así que solo se permite en una cuenta sin movimientos.
+   */
+  private async assertTypeChangeAllowed(
+    existing: Account,
+    type: AccountType,
+  ): Promise<void> {
+    const wasCard = existing.type === AccountType.CREDIT_CARD;
+    const willBeCard = type === AccountType.CREDIT_CARD;
+    if (wasCard === willBeCard) return;
+
+    const movements = await this.prisma.transaction.count({
+      where: { OR: [{ accountId: existing.id }, { toAccountId: existing.id }] },
+    });
+    if (movements > 0) {
+      throw new BadRequestException(CREDIT_CARD_TYPE_CHANGE_MESSAGE);
     }
   }
 
