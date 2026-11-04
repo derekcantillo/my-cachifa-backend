@@ -1,5 +1,14 @@
 import type { Account, AccountType, Prisma } from '@prisma/client';
 
+/** Lo que cada consulta de `/accounts` trae de la entidad. */
+export const ACCOUNT_INCLUDE = {
+  institution: { select: { id: true, name: true } },
+} satisfies Prisma.AccountInclude;
+
+export type AccountWithInstitution = Prisma.AccountGetPayload<{
+  include: typeof ACCOUNT_INCLUDE;
+}>;
+
 /** Lo que trae un `Transaction` al incluir su cuenta — sin `currentBalance`, que solo tiene sentido calculado una vez por cuenta, no repetido por cada movimiento. */
 export interface IAccountSummaryResponse {
   id: string;
@@ -14,6 +23,10 @@ export interface IAccountResponse extends IAccountSummaryResponse {
   initialBalanceDate: string | null;
   /** `initialBalance` más el efecto de todo movimiento desde `initialBalanceDate` (o desde siempre, si no hay una). */
   currentBalance: number;
+  /** `null` = sin entidad ("Sin entidad" en Mis productos). */
+  institution: { id: string; name: string } | null;
+  hasDebitCard: boolean;
+  cardLast4: string | null;
 }
 
 export function toAccountSummaryResponse(
@@ -29,7 +42,7 @@ export function toAccountSummaryResponse(
 }
 
 export function toAccountResponse(
-  account: Account,
+  account: AccountWithInstitution,
   currentBalance: Prisma.Decimal,
 ): IAccountResponse {
   return {
@@ -39,5 +52,8 @@ export function toAccountResponse(
       ? account.initialBalanceDate.toISOString()
       : null,
     currentBalance: currentBalance.toNumber(),
+    institution: account.institution,
+    hasDebitCard: account.hasDebitCard,
+    cardLast4: account.cardLast4,
   };
 }

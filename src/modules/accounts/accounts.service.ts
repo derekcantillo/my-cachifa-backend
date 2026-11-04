@@ -1,15 +1,34 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Account, Prisma, TransactionType } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Account, AccountType, Prisma, TransactionType } from '@prisma/client';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { PrismaService } from '@modules/prisma/prisma.service';
+import { DEBIT_CARD_HOLDER_TYPES } from './account-types';
 import type { CreateAccountDto } from './dto/create-account.dto';
 import type { UpdateInitialBalanceDto } from './dto/update-initial-balance.dto';
 import {
+  ACCOUNT_INCLUDE,
   toAccountResponse,
   type IAccountResponse,
 } from './interfaces/account-response.interface';
 
 const ZERO = new Prisma.Decimal(0);
+
+export const DEBIT_CARD_NOT_ALLOWED_MESSAGE =
+  'hasDebitCard is only allowed on SAVINGS_ACCOUNT, CHECKING_ACCOUNT and DIGITAL_WALLET accounts';
+
+export const CARD_LAST4_WITHOUT_CARD_MESSAGE =
+  'cardLast4 needs a card: a CREDIT_CARD, or an account with hasDebitCard';
+
+/** Lo que define si una cuenta puede tener tarjeta débito o dígitos de tarjeta. */
+interface ProductFields {
+  type: AccountType;
+  hasDebitCard: boolean;
+  cardLast4: string | null;
+}
 
 export interface IAccountBalance {
   account: Account;
@@ -47,6 +66,7 @@ export class AccountsService {
     const accounts = await this.prisma.account.findMany({
       where: { userId },
       orderBy: { createdAt: 'asc' },
+      include: ACCOUNT_INCLUDE,
     });
 
     return Promise.all(
@@ -58,9 +78,24 @@ export class AccountsService {
 
   async create(dto: CreateAccountDto): Promise<IAccountResponse> {
     const userId = await this.currentUser.getUserId();
+    const product: ProductFields = {
+      type: dto.type,
+      hasDebitCard: dto.hasDebitCard ?? false,
+      cardLast4: dto.cardLast4 ?? null,
+    };
+    this.assertProductFields(product);
+    if (dto.institutionId) {
+      await this.assertInstitutionOwned(dto.institutionId, userId);
+    }
 
     const account = await this.prisma.account.create({
-      data: { userId, name: dto.name, type: dto.type },
+      data: {
+        userId,
+        name: dto.name,
+        institutionId: dto.institutionId ?? null,
+        ...product,
+      },
+      include: ACCOUNT_INCLUDE,
     });
 
     return toAccountResponse(
@@ -82,6 +117,7 @@ export class AccountsService {
         initialBalance: new Prisma.Decimal(dto.amount),
         initialBalanceDate: new Date(dto.date),
       },
+      include: ACCOUNT_INCLUDE,
     });
 
     return toAccountResponse(
@@ -114,6 +150,41 @@ export class AccountsService {
     }
 
     return account;
+  }
+
+  /**
+   * La tarjeta débito es de cuentas con plata propia (ahorros, corriente,
+   * billetera); los dígitos necesitan una tarjeta: la de crédito o la débito.
+   * Se valida el estado final, no solo lo que llega en el body.
+   */
+  private assertProductFields(product: ProductFields): void {
+    if (
+      product.hasDebitCard &&
+      !DEBIT_CARD_HOLDER_TYPES.includes(product.type)
+    ) {
+      throw new BadRequestException(DEBIT_CARD_NOT_ALLOWED_MESSAGE);
+    }
+    if (
+      product.cardLast4 !== null &&
+      product.type !== AccountType.CREDIT_CARD &&
+      !product.hasDebitCard
+    ) {
+      throw new BadRequestException(CARD_LAST4_WITHOUT_CARD_MESSAGE);
+    }
+  }
+
+  private async assertInstitutionOwned(
+    institutionId: string,
+    userId: string,
+  ): Promise<void> {
+    const institution = await this.prisma.financialInstitution.findFirst({
+      where: { id: institutionId, userId },
+      select: { id: true },
+    });
+
+    if (!institution) {
+      throw new BadRequestException(`Institution ${institutionId} not found`);
+    }
   }
 
   /**

@@ -83,10 +83,18 @@ async function main(): Promise<void> {
   console.log(`✓ Budgets seeded for ${period.label}`);
 
   // ─── Accounts ──────────────────────────────────────────────
-  const accounts: { name: string; type: AccountType }[] = [
-    { name: 'Tarjeta débito principal', type: AccountType.DEBIT_CARD },
+  // DEBIT_CARD is retired: a debit card is `hasDebitCard` on a bank account.
+  const accounts: {
+    name: string;
+    type: AccountType;
+    hasDebitCard?: boolean;
+  }[] = [
     { name: 'Efectivo', type: AccountType.CASH },
-    { name: 'Cuenta de ahorros', type: AccountType.SAVINGS_ACCOUNT },
+    {
+      name: 'Cuenta de ahorros',
+      type: AccountType.SAVINGS_ACCOUNT,
+      hasDebitCard: true,
+    },
   ];
 
   for (const account of accounts) {
