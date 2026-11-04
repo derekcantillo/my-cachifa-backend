@@ -9,7 +9,6 @@ import { PrismaService } from '@modules/prisma/prisma.service';
 import { DEBIT_CARD_HOLDER_TYPES } from './account-types';
 import type { CreateAccountDto } from './dto/create-account.dto';
 import type { UpdateAccountDto } from './dto/update-account.dto';
-import type { UpdateInitialBalanceDto } from './dto/update-initial-balance.dto';
 import {
   ACCOUNT_INCLUDE,
   toAccountResponse,
@@ -188,28 +187,6 @@ export class AccountsService {
     );
   }
 
-  async updateInitialBalance(
-    id: string,
-    dto: UpdateInitialBalanceDto,
-  ): Promise<IAccountResponse> {
-    const userId = await this.currentUser.getUserId();
-    await this.findOwned(id, userId);
-
-    const account = await this.prisma.account.update({
-      where: { id },
-      data: {
-        initialBalance: new Prisma.Decimal(dto.amount),
-        initialBalanceDate: new Date(dto.date),
-      },
-      include: ACCOUNT_INCLUDE,
-    });
-
-    return toAccountResponse(
-      account,
-      await this.computeCurrentBalance(account),
-    );
-  }
-
   /** Cada cuenta del usuario con su `currentBalance`, para quien necesite separarlas por tipo. */
   async getBalances(userId: string): Promise<IAccountBalance[]> {
     const accounts = await this.prisma.account.findMany({
@@ -324,9 +301,7 @@ export class AccountsService {
    * Una `TRANSFER` resta en su origen y suma en su destino (`toAccountId`):
    * pagar una tarjeta sube su saldo hacia 0.
    */
-  private async computeCurrentBalance(
-    account: Account,
-  ): Promise<Prisma.Decimal> {
+  async computeCurrentBalance(account: Account): Promise<Prisma.Decimal> {
     const dateFilter = account.initialBalanceDate
       ? { transactionDate: { gte: account.initialBalanceDate } }
       : {};
