@@ -50,9 +50,15 @@ export class ReportsService {
             },
           },
         }),
+        // Cuenta todos los tipos salvo `TRANSFER`, que no tiene categoría
+        // real (se guarda `OTHER`) y no es un movimiento de gasto ni ingreso.
         this.prisma.transaction.groupBy({
           by: ['category'],
-          where: { userId, periodId: period.id },
+          where: {
+            userId,
+            periodId: period.id,
+            type: { not: TransactionType.TRANSFER },
+          },
           _count: { category: true },
           orderBy: { _count: { category: 'desc' } },
           take: 1,
