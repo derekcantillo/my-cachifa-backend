@@ -55,6 +55,7 @@ const GIVEN: Transaction = {
   id: 'tx_given',
   userId: USER_ID,
   accountId: 'acc_1',
+  toAccountId: null,
   recurringExpenseId: null,
   loanId: 'loan_1',
   loanRepaymentId: null,

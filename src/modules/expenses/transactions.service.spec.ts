@@ -19,6 +19,7 @@ function transaction(
     id: 'tx_1',
     userId: USER_ID,
     accountId: null,
+    toAccountId: null,
     recurringExpenseId: null,
     loanId: null,
     loanRepaymentId: null,
@@ -35,6 +36,7 @@ function transaction(
     createdAt: DATE,
     updatedAt: DATE,
     account: null,
+    toAccount: null,
     ...overrides,
   };
 }

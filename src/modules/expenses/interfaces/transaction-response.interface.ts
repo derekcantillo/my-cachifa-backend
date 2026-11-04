@@ -9,7 +9,16 @@ import {
   type IAccountSummaryResponse,
 } from '@modules/accounts/interfaces/account-response.interface';
 
-export type TransactionWithAccount = Transaction & { account: Account | null };
+export type TransactionWithAccount = Transaction & {
+  account: Account | null;
+  toAccount: Account | null;
+};
+
+/** `include` que produce un `TransactionWithAccount`. */
+export const TRANSACTION_ACCOUNTS_INCLUDE = {
+  account: true,
+  toAccount: true,
+} as const;
 
 /**
  * Los montos viajan como `number` en JSON (el móvil los consume así); en base
@@ -24,6 +33,9 @@ export interface ITransactionResponse {
   tags: string[];
   accountId: string | null;
   account: IAccountSummaryResponse | null;
+  /** Cuenta destino de una `TRANSFER` (`accountId` es el origen); `null` en cualquier otro tipo. */
+  toAccountId: string | null;
+  toAccount: IAccountSummaryResponse | null;
   recurringExpenseId: string | null;
   loanId: string | null;
   transactionDate: string;
@@ -49,6 +61,10 @@ export function toTransactionResponse(
     accountId: transaction.accountId,
     account: transaction.account
       ? toAccountSummaryResponse(transaction.account)
+      : null,
+    toAccountId: transaction.toAccountId,
+    toAccount: transaction.toAccount
+      ? toAccountSummaryResponse(transaction.toAccount)
       : null,
     recurringExpenseId: transaction.recurringExpenseId,
     loanId: transaction.loanId,

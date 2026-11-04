@@ -19,6 +19,7 @@ import type { CreateTransactionDto } from './dto/create-transaction.dto';
 import type { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { LOAN_MOVEMENT_TYPES } from './loan-movement-types';
 import {
+  TRANSACTION_ACCOUNTS_INCLUDE,
   toTransactionResponse,
   type ITransactionResponse,
   type TransactionWithAccount,
@@ -46,7 +47,7 @@ export class TransactionsService {
 
     const transactions = await this.prisma.transaction.findMany({
       where: { userId, periodId: period.id },
-      include: { account: true },
+      include: TRANSACTION_ACCOUNTS_INCLUDE,
       orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }],
     });
 
@@ -91,7 +92,7 @@ export class TransactionsService {
           // Deprecado: solo lo lee el móvil. `budgetPeriod` ya no se escribe.
           monthYear: toMonthYear(transactionDate),
         },
-        include: { account: true },
+        include: TRANSACTION_ACCOUNTS_INCLUDE,
       });
 
       // Un salario abre su período y cierra el anterior; cualquier otra
@@ -165,7 +166,7 @@ export class TransactionsService {
             : {}),
           ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
         },
-        include: { account: true },
+        include: TRANSACTION_ACCOUNTS_INCLUDE,
       });
 
       // Si antes era salario (y ahora cambió de fecha o dejó de serlo), su
@@ -229,7 +230,7 @@ export class TransactionsService {
   ): Promise<TransactionWithAccount> {
     const transaction = await this.prisma.transaction.findFirst({
       where: { id, userId },
-      include: { account: true },
+      include: TRANSACTION_ACCOUNTS_INCLUDE,
     });
 
     if (!transaction) {
