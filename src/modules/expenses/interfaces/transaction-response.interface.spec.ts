@@ -20,6 +20,9 @@ function account(id: string, name: string, type: AccountType): Account {
     type,
     initialBalance: new Prisma.Decimal(0),
     initialBalanceDate: null,
+    institutionId: null,
+    hasDebitCard: false,
+    cardLast4: null,
     createdAt: DATE,
     updatedAt: DATE,
   };

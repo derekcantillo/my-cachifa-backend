@@ -22,6 +22,9 @@ function balance(
     type,
     initialBalance: new Prisma.Decimal(0),
     initialBalanceDate: CREATED,
+    institutionId: null,
+    hasDebitCard: false,
+    cardLast4: null,
     createdAt: CREATED,
     updatedAt: CREATED,
   };

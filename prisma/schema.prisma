@@ -88,11 +88,16 @@ enum GoalStatus {
   PAUSED
 }
 
+/// `DEBIT_CARD` queda por compatibilidad (Postgres no borra valores de un enum con
+/// facilidad), pero la API lo rechaza al crear o editar: una tarjeta débito no es una
+/// cuenta, es `hasDebitCard` de una cuenta de ahorros, corriente o billetera.
 enum AccountType {
   DEBIT_CARD
   CREDIT_CARD
   CASH
   SAVINGS_ACCOUNT
+  CHECKING_ACCOUNT
+  DIGITAL_WALLET
 }
 
 enum AlertType {
@@ -112,15 +117,15 @@ enum AlertType {
 // ─── Models ───────────────────────────────────────────────────
 
 model User {
-  id                      String             @id @default(cuid())
-  waNumber                String             @unique @map("wa_number")
+  id                      String                 @id @default(cuid())
+  waNumber                String                 @unique @map("wa_number")
   name                    String?
   /**
    * % del ingreso disponible que se recomienda destinar a ahorro/metas.
    */
-  targetSavingsPercentage Decimal            @default(30.00) @map("target_savings_percentage") @db.Decimal(5, 2)
-  createdAt               DateTime           @default(now()) @map("created_at")
-  updatedAt               DateTime           @updatedAt @map("updated_at")
+  targetSavingsPercentage Decimal                @default(30.00) @map("target_savings_percentage") @db.Decimal(5, 2)
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
   transactions            Transaction[]
   budgets                 Budget[]
   budgetRules             BudgetRule[]
@@ -131,33 +136,57 @@ model User {
   loans                   Loan[]
   periodLedgers           PeriodLedger[]
   financialPeriods        FinancialPeriod[]
+  institutions            FinancialInstitution[]
 
   @@map("users")
 }
 
 model Account {
-  id                 String        @id @default(cuid())
-  userId             String        @map("user_id")
+  id                 String                @id @default(cuid())
+  userId             String                @map("user_id")
   name               String
   type               AccountType
   /**
    * Saldo del que parte `currentBalance`, para "ponerse al día" sin reconstruir el historial.
    */
-  initialBalance     Decimal       @default(0) @map("initial_balance") @db.Decimal(12, 2)
+  initialBalance     Decimal               @default(0) @map("initial_balance") @db.Decimal(12, 2)
   /**
    * Desde cuándo aplica `initialBalance`; sin ella, `currentBalance` suma todo el historial.
    */
-  initialBalanceDate DateTime?     @map("initial_balance_date")
-  createdAt          DateTime      @default(now()) @map("created_at")
-  updatedAt          DateTime      @updatedAt @map("updated_at")
-  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  initialBalanceDate DateTime?             @map("initial_balance_date")
+  /// Entidad del producto ("Bancolombia"); `null` = sin entidad (efectivo).
+  institutionId      String?               @map("institution_id")
+  /// La cuenta tiene tarjeta débito. Es solo un medio de pago: no cambia ningún cálculo.
+  hasDebitCard       Boolean               @default(false) @map("has_debit_card")
+  /// Últimos 4 dígitos de la tarjeta (débito de la cuenta, o la tarjeta de crédito).
+  cardLast4          String?               @map("card_last4") @db.VarChar(4)
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `Restrict`: una entidad con productos no se borra (la API responde 400 antes).
+  institution        FinancialInstitution? @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   transactions       Transaction[]
   /// Transferencias (`TRANSFER`) que llegan a esta cuenta.
-  incomingTransfers  Transaction[] @relation("TransferDestination")
+  incomingTransfers  Transaction[]         @relation("TransferDestination")
   loans              Loan[]
 
   @@index([userId])
+  @@index([institutionId])
   @@map("accounts")
+}
+
+/// Banco o billetera que agrupa productos (`Account`) en "Mis productos".
+model FinancialInstitution {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  name      String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts  Account[]
+
+  @@unique([userId, name])
+  @@map("financial_institutions")
 }
 
 model Transaction {

@@ -39,6 +39,9 @@ function account(
     type,
     initialBalance: new Prisma.Decimal(initialBalance),
     initialBalanceDate,
+    institutionId: null,
+    hasDebitCard: false,
+    cardLast4: null,
     createdAt: ANCHOR,
     updatedAt: ANCHOR,
   };
