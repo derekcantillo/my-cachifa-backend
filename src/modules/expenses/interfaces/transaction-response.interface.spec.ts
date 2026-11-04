@@ -43,6 +43,8 @@ function transaction(
     recurringExpenseId: null,
     loanId: null,
     loanRepaymentId: null,
+    installmentPlanId: null,
+    installmentNumber: null,
     amount: new Prisma.Decimal(838_675),
     type: TransactionType.EXPENSE,
     category: Category.OTHER,

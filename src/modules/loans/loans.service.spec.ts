@@ -59,6 +59,8 @@ const GIVEN: Transaction = {
   recurringExpenseId: null,
   loanId: 'loan_1',
   loanRepaymentId: null,
+  installmentPlanId: null,
+  installmentNumber: null,
   amount: new Prisma.Decimal(1_000_000),
   type: TransactionType.LOAN_GIVEN,
   category: Category.LOAN,

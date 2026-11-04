@@ -67,6 +67,9 @@ enum TransactionType {
   /// avance o mover plata. No es gasto ni ingreso: fuera de ledger,
   /// presupuestos y reportes.
   TRANSFER
+  /// Compra a N cuotas con tarjeta (`installmentPlanId`): sube la deuda de la tarjeta
+  /// por el monto completo, pero no es gasto. El gasto son las cuotas reconocidas.
+  FINANCED_PURCHASE
 }
 
 enum LoanStatus {
@@ -137,6 +140,7 @@ model User {
   periodLedgers           PeriodLedger[]
   financialPeriods        FinancialPeriod[]
   institutions            FinancialInstitution[]
+  installmentPlans        InstallmentPlan[]
 
   @@map("users")
 }
@@ -179,10 +183,66 @@ model Account {
   incomingTransfers  Transaction[]              @relation("TransferDestination")
   loans              Loan[]
   balanceAdjustments AccountBalanceAdjustment[]
+  installmentPlans   InstallmentPlan[]
 
   @@index([userId])
   @@index([institutionId])
   @@map("accounts")
+}
+
+enum InstallmentPlanKind {
+  /// Compra nueva a cuotas (después del ancla): crea su `FINANCED_PURCHASE`.
+  PURCHASE
+  /// Ampliación de plazo: reestructura deuda que ya existía. Sin transacción.
+  REFINANCE
+  /// Compra a cuotas que ya estaba en el extracto (antes del ancla). Sin transacción.
+  LEGACY
+}
+
+/// `FINISHED` no se guarda: se calcula (todas las cuotas facturadas y reconocidas).
+enum InstallmentPlanStatus {
+  ACTIVE
+  /// Liquidado: el capital restante se reconoció de una vez.
+  SETTLED
+}
+
+/// Compra o deuda a cuotas de una `CREDIT_CARD` (docs/design-liabilities.md D). La
+/// cuota es solo capital (`principal / installmentCount`); los intereses los cobra el
+/// extracto y se registran aparte. El calendario se calcula, no se guarda.
+model InstallmentPlan {
+  id                    String                @id @default(cuid())
+  userId                String                @map("user_id")
+  /// La tarjeta.
+  accountId             String                @map("account_id")
+  kind                  InstallmentPlanKind
+  description           String
+  /// Lo que se compró: también es la categoría de cada cuota reconocida.
+  category              Category?
+  principal             Decimal               @db.Decimal(12, 2)
+  installmentCount      Int                   @map("installment_count")
+  /// % mensual, fijo para este plan (cada compra conserva la tasa del día).
+  monthlyRate           Decimal               @map("monthly_rate") @db.Decimal(7, 4)
+  /// Día de la compra o de la ampliación.
+  startDate             DateTime              @map("start_date") @db.Date
+  /// Corte que factura la cuota 1 (día de corte de la tarjeta en ese mes).
+  firstStatementDate    DateTime              @map("first_statement_date") @db.Date
+  /// Cuotas ya pagadas antes de que la app conociera el plan (8 si "va en la 9/24").
+  billedBeforeTracking  Int                   @default(0) @map("billed_before_tracking")
+  /// Si cada cuota cuenta como gasto del presupuesto en su fecha de pago.
+  recognizeInstallments Boolean               @map("recognize_installments")
+  status                InstallmentPlanStatus @default(ACTIVE)
+  settledAt             DateTime?             @map("settled_at") @db.Date
+  /// Cuota con la que se reconoció el capital restante al liquidar (para deshacerlo).
+  settlementInstallment Int?                  @map("settlement_installment")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account               Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions          Transaction[]
+
+  @@index([userId])
+  @@index([accountId])
+  @@map("installment_plans")
 }
 
 enum BalanceAdjustmentReason {
@@ -290,7 +350,14 @@ model Transaction {
   loan               Loan?             @relation(fields: [loanId], references: [id], onDelete: Cascade)
   loanRepayment      LoanRepayment?    @relation(fields: [loanRepaymentId], references: [id], onDelete: Cascade)
   period             FinancialPeriod?  @relation(fields: [periodId], references: [id], onDelete: SetNull)
+  /// Plan de cuotas: su `FINANCED_PURCHASE` (`installmentNumber = null`) o una cuota
+  /// reconocida como gasto. Solo se mantienen desde `/installment-plans`.
+  installmentPlanId  String?           @map("installment_plan_id")
+  /// Número de la cuota reconocida (1..N); `null` en el `FINANCED_PURCHASE`.
+  installmentNumber  Int?              @map("installment_number")
+  installmentPlan    InstallmentPlan?  @relation(fields: [installmentPlanId], references: [id], onDelete: Cascade)
 
+  @@unique([installmentPlanId, installmentNumber])
   @@index([userId, periodId])
   @@index([accountId])
   @@index([toAccountId])
