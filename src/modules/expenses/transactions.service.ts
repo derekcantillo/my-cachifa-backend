@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type Category } from '@prisma/client';
+import { Category, Prisma, TransactionType } from '@prisma/client';
 import { BudgetRecalculationService } from '@modules/budgets/budget-recalculation.service';
 import { CurrentUserService } from '@common/services/current-user.service';
 import { toMonthYear } from '@common/utils/month.util';
@@ -27,6 +27,21 @@ import {
 
 const LINKED_CATEGORY_CHANGE_HINT =
   'Send recurringExpenseId: null to unlink it, or the id of a recurring expense in the new category.';
+
+export const TRANSFER_ACCOUNTS_REQUIRED_MESSAGE =
+  'A TRANSFER needs accountId (origin) and toAccountId (destination)';
+export const TRANSFER_SAME_ACCOUNT_MESSAGE =
+  'A TRANSFER needs two different accounts';
+export const TRANSFER_RECURRING_MESSAGE =
+  'A TRANSFER cannot be linked to a recurring expense';
+export const TO_ACCOUNT_ONLY_FOR_TRANSFER_MESSAGE =
+  'toAccountId is only allowed on TRANSFER transactions';
+export const TRANSFER_TYPE_CHANGE_MESSAGE =
+  'A transaction cannot become a TRANSFER or stop being one: delete it and create a new one';
+
+function isTransfer(type: TransactionType): boolean {
+  return type === TransactionType.TRANSFER;
+}
 
 @Injectable()
 export class TransactionsService {
@@ -62,12 +77,20 @@ export class TransactionsService {
   async create(dto: CreateTransactionDto): Promise<ITransactionResponse> {
     const userId = await this.currentUser.getUserId();
     const accountId = dto.accountId ?? null;
-    await this.assertAccountOwnership(accountId, userId);
+    const toAccountId = dto.toAccountId ?? null;
     const recurringExpenseId = dto.recurringExpenseId ?? null;
+    if (isTransfer(dto.type)) {
+      this.assertTransferShape(accountId, toAccountId, recurringExpenseId);
+    } else if (toAccountId !== null) {
+      throw new BadRequestException(TO_ACCOUNT_ONLY_FOR_TRANSFER_MESSAGE);
+    }
+    await this.assertAccountOwnership(accountId, userId);
+    await this.assertAccountOwnership(toAccountId, userId);
+    const category = this.categoryFor(dto.type, dto.category);
     await this.assertRecurringExpenseMatch(
       recurringExpenseId,
       userId,
-      dto.category,
+      category,
     );
 
     const transactionDate = dto.transactionDate
@@ -79,10 +102,11 @@ export class TransactionsService {
         data: {
           userId,
           accountId,
+          toAccountId,
           recurringExpenseId,
           amount: new Prisma.Decimal(dto.amount),
           type: dto.type,
-          category: dto.category,
+          category,
           description: dto.description ?? null,
           tags: dto.tags ?? [],
           // `rawMessage` existe para el flujo de WhatsApp; desde la API REST
@@ -117,25 +141,44 @@ export class TransactionsService {
     const existing = await this.findOwned(id, userId);
     this.assertNotLoanMovement(existing);
 
+    const transfer = isTransfer(existing.type);
+    if (dto.type !== undefined && isTransfer(dto.type) !== transfer) {
+      throw new BadRequestException(TRANSFER_TYPE_CHANGE_MESSAGE);
+    }
+    if (transfer) {
+      this.assertTransferShape(
+        dto.accountId !== undefined ? dto.accountId : existing.accountId,
+        dto.toAccountId !== undefined ? dto.toAccountId : existing.toAccountId,
+        dto.recurringExpenseId ?? null,
+      );
+    } else if (dto.toAccountId !== undefined && dto.toAccountId !== null) {
+      throw new BadRequestException(TO_ACCOUNT_ONLY_FOR_TRANSFER_MESSAGE);
+    }
+    // Una transferencia no tiene categoría: la que llegue se ignora.
+    const category = transfer ? undefined : dto.category;
+
     if (dto.accountId !== undefined) {
       await this.assertAccountOwnership(dto.accountId, userId);
+    }
+    if (transfer && dto.toAccountId !== undefined) {
+      await this.assertAccountOwnership(dto.toAccountId, userId);
     }
     if (dto.recurringExpenseId !== undefined) {
       await this.assertRecurringExpenseMatch(
         dto.recurringExpenseId,
         userId,
-        dto.category ?? existing.category,
+        category ?? existing.category,
       );
     } else if (
-      dto.category !== undefined &&
-      dto.category !== existing.category &&
+      category !== undefined &&
+      category !== existing.category &&
       existing.recurringExpenseId
     ) {
       // El vínculo que ya tiene tiene que seguir valiendo con la categoría nueva.
       await this.assertRecurringExpenseMatch(
         existing.recurringExpenseId,
         userId,
-        dto.category,
+        category,
         LINKED_CATEGORY_CHANGE_HINT,
       );
     }
@@ -152,13 +195,16 @@ export class TransactionsService {
             ? { amount: new Prisma.Decimal(dto.amount) }
             : {}),
           ...(dto.type !== undefined ? { type: dto.type } : {}),
-          ...(dto.category !== undefined ? { category: dto.category } : {}),
+          ...(category !== undefined ? { category } : {}),
           transactionDate: nextDate,
           monthYear: toMonthYear(nextDate),
           ...(dto.description !== undefined
             ? { description: dto.description }
             : {}),
           ...(dto.accountId !== undefined ? { accountId: dto.accountId } : {}),
+          ...(transfer && dto.toAccountId !== undefined
+            ? { toAccountId: dto.toAccountId }
+            : {}),
           // Los pendientes de `GET /recurring-expenses/pending` se derivan de
           // este vínculo al leerlos; la cascada de abajo cubre ledger y budgets.
           ...(dto.recurringExpenseId !== undefined
@@ -252,6 +298,39 @@ export class TransactionsService {
     ) {
       throw new ConflictException('Loan movements are managed from /loans');
     }
+  }
+
+  /**
+   * Una `TRANSFER` mueve plata entre dos cuentas propias distintas: necesita
+   * ambas y no se cruza con gastos fijos (no es gasto).
+   */
+  private assertTransferShape(
+    accountId: string | null,
+    toAccountId: string | null,
+    recurringExpenseId: string | null,
+  ): void {
+    if (!accountId || !toAccountId) {
+      throw new BadRequestException(TRANSFER_ACCOUNTS_REQUIRED_MESSAGE);
+    }
+    if (accountId === toAccountId) {
+      throw new BadRequestException(TRANSFER_SAME_ACCOUNT_MESSAGE);
+    }
+    if (recurringExpenseId) {
+      throw new BadRequestException(TRANSFER_RECURRING_MESSAGE);
+    }
+  }
+
+  /**
+   * La categoría de una `TRANSFER` es `OTHER` por convención (la columna es
+   * obligatoria y la UI no la muestra). En los demás tipos el DTO ya exige una.
+   */
+  private categoryFor(
+    type: TransactionType,
+    category: Category | undefined,
+  ): Category {
+    if (isTransfer(type)) return Category.OTHER;
+    if (!category) throw new BadRequestException('category is required');
+    return category;
   }
 
   private async assertAccountOwnership(

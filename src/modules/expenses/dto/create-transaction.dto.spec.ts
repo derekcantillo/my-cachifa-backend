@@ -39,3 +39,41 @@ describe('CreateTransactionDto — type', () => {
     },
   );
 });
+
+describe('CreateTransactionDto — TRANSFER', () => {
+  const TRANSFER = {
+    amount: 838_675,
+    type: 'TRANSFER',
+    accountId: 'acc_savings',
+    toAccountId: 'acc_card',
+  };
+
+  it('acepta una transferencia sin categoría', async () => {
+    const dto = await parseBody(TRANSFER);
+    expect(dto).toMatchObject(TRANSFER);
+    expect(dto.category).toBeUndefined();
+  });
+
+  it('acepta una transferencia con categoría (el servicio la ignora)', async () => {
+    const dto = await parseBody({ ...TRANSFER, category: 'OTHER' });
+    expect(dto.category).toBe('OTHER');
+  });
+
+  it('valida la categoría de una transferencia si llega', async () => {
+    await expect(
+      parseBody({ ...TRANSFER, category: 'NOPE' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('sigue exigiendo categoría en los demás tipos', async () => {
+    await expect(
+      parseBody({ amount: 50_000, type: 'EXPENSE' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it.each([0, -10])('rechaza un monto de %s', async (amount) => {
+    await expect(parseBody({ ...TRANSFER, amount })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+});

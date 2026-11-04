@@ -22,7 +22,8 @@ import {
 /**
  * Todos los campos son opcionales. `accountId` y `recurringExpenseId` aceptan
  * `null` de forma explícita para desligar la transacción de una cuenta o de un
- * gasto fijo.
+ * gasto fijo. Una `TRANSFER` no puede quedar sin origen ni destino, y ningún
+ * movimiento puede pasar a ser `TRANSFER` ni dejar de serlo.
  */
 export class UpdateTransactionDto {
   @IsOptional()
@@ -48,6 +49,12 @@ export class UpdateTransactionDto {
   @IsString()
   @IsNotEmpty()
   accountId?: string | null;
+
+  /** Cuenta destino; solo para una `TRANSFER`. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  toAccountId?: string | null;
 
   /**
    * Cruza la transacción con un gasto fijo, o la descruza con `null`. Si se
