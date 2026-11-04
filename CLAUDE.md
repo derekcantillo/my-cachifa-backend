@@ -8,7 +8,8 @@ API de **Cachifa**, sistema de finanzas personales de un solo usuario (Derek). L
 - `npx tsc --noEmit` para revisar tipos sin compilar
 - `pnpm prisma:migrate` (usa `.env`, `DATABASE_URL_LOCAL`) · `pnpm prisma:seed`
 - `DATABASE_URL` de `.env.example` apunta al host `postgres` (el contenedor). Para `pnpm start:dev` desde la máquina local hay que usar `localhost:5432`, o levantar `docker compose up app`.
-- ⚠️ En este laptop **no hay base de desarrollo aparte**: el único Postgres que corre es `cachifa_db` de `docker-compose.prod.yml`, publicado en `127.0.0.1:5432`, y `docker-compose.yml` usa el mismo `container_name` y el mismo volumen. `DATABASE_URL_LOCAL` (y por tanto `pnpm prisma:migrate`, que es `migrate dev`) apunta a **producción**. Para probar migraciones, usar un Postgres desechable en otro puerto (p. ej. `docker run --rm -d --name cachifa_scratch_db -p 127.0.0.1:55432:5432 ...`) y pasar su `DATABASE_URL` por el entorno.
+- ⚠️ **NO existe base de desarrollo aparte.** El único Postgres que corre es `cachifa_db` de `docker-compose.prod.yml`, publicado en `127.0.0.1:5432`, y `docker-compose.yml` usa el mismo `container_name` y el mismo volumen. `DATABASE_URL_LOCAL` apunta a **producción**. **Nunca correr `pnpm prisma:migrate` (es `migrate dev`) contra la base real desde el host**, ni `prisma migrate deploy`/`db push`/`seed` con el `.env` tal cual.
+- **Probar una migración:** `scripts/test-migration-on-copy.sh` (`DEPLOY.md` §4.1). Vuelca producción en solo lectura, la carga en un Postgres desechable (`127.0.0.1:55432`), aplica las migraciones pendientes ahí, levanta la API contra la copia en `127.0.0.1:3001` con una API key aleatoria (`-- <comando>` recibe `COPY_API_URL`, `COPY_API_KEY`, `COPY_DATABASE_URL`, `COPY_API_LOG`) y al salir borra copia y volcado y comprueba que producción quedó idéntica. Para un Postgres vacío sin datos: `docker run --rm -d --name cachifa_scratch_db -p 127.0.0.1:55432:5432 ...` y su `DATABASE_URL` por el entorno.
 - Antes de cerrar un cambio: lint + `pnpm test` + `npx tsc --noEmit`.
 
 ## Stack
@@ -18,7 +19,7 @@ NestJS 11 + Fastify, TypeScript strict, Prisma 6, PostgreSQL 16, Joi (validació
 - `src/modules/`: accounts, admin, ai, alerts, budget-rules, budgets, **expenses** (aquí vive el CRUD de transacciones), financial-periods, goals (+`lib/goal-plan.ts`), health, loans, net-worth, period-ledger, prisma, recurring-expenses, reports, settings, whatsapp.
 - `src/common/`: `guards/api-key.guard.ts`, filters, interceptors, pipes, `utils/` (period, currency, percentage; `month.util.ts` es legado).
 - `prisma/`: `schema.prisma`, `migrations/` (nunca editar una ya aplicada), `seed.ts`, `verify-loan-repayment-links.sql` (verificación de solo lectura).
-- `backup/`: imagen del servicio `backup` (`Dockerfile` sobre `postgres:16-alpine` + rclone, `backup.sh` con subcomandos `schedule|run|status|list|fetch`). `scripts/restore-test.sh`: restaura el último dump en `cachifa_restore_test` y la borra.
+- `backup/`: imagen del servicio `backup` (`Dockerfile` sobre `postgres:16-alpine` + rclone, `backup.sh` con subcomandos `schedule|run|status|list|fetch`). `scripts/restore-test.sh`: restaura el último dump en `cachifa_restore_test` y la borra. `scripts/test-migration-on-copy.sh`: prueba migraciones sobre una copia desechable de producción.
 - `main.ts`: prefijo global `api/v1` (excluye `webhook`), CORS en `config/cors.config.ts`, `fastify-raw-body` global (HMAC de WhatsApp).
 
 ## Despliegue

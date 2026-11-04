@@ -192,6 +192,46 @@ docker compose -f docker-compose.prod.yml exec app pnpm prisma migrate deploy
 > `down -v` **borra el volumen y con él todos los datos**. Nunca uses `-v` aquí
 > sin un backup reciente (§5).
 
+### 4.1 Probar una migración sobre una copia antes de desplegarla
+
+En este laptop **no hay base de desarrollo**: el Postgres de `127.0.0.1:5432`
+(y `DATABASE_URL_LOCAL`, y el `docker-compose.yml` de desarrollo, que usa el
+mismo contenedor y el mismo volumen) es **producción**. Nunca corras
+`pnpm prisma:migrate` (es `migrate dev`, que puede borrar datos) contra ella
+desde el host. Para probar una migración nueva:
+
+```bash
+scripts/test-migration-on-copy.sh                 # deja la copia arriba hasta que pulses Enter
+scripts/test-migration-on-copy.sh -- <comando>    # corre <comando> contra la copia y limpia
+scripts/test-migration-on-copy.sh --no-api -- true  # solo la migración, sin levantar la API
+```
+
+1. Saca un `pg_dump` de producción en sesión de **solo lectura**
+   (`default_transaction_read_only=on`) a una carpeta temporal privada.
+2. Lo carga en un Postgres desechable (`cachifa_migration_copy`,
+   `127.0.0.1:55432`, contraseña aleatoria).
+3. Aplica ahí las migraciones pendientes (`prisma migrate deploy`) y muestra
+   `migrate status` antes y después.
+4. Compila la API y la levanta contra la copia en `127.0.0.1:3001`, con una API
+   key aleatoria y sin credenciales de WhatsApp. El comando (o tu otra terminal)
+   recibe `COPY_DATABASE_URL`, `COPY_API_URL`, `COPY_API_KEY` y `COPY_API_LOG`:
+
+   ```bash
+   scripts/test-migration-on-copy.sh -- sh -c \
+     'curl -s -H "X-API-Key: $COPY_API_KEY" "$COPY_API_URL/accounts"'
+   ```
+
+5. Al terminar (también si algo falla o con Ctrl-C) apaga la API, borra el
+   contenedor y el volcado, y vuelve a volcar producción: si no es idéntico al
+   primer volcado, avisa con las filas por tabla de antes y después y termina
+   con error. Producción solo cambia si la API real (cron o peticiones) escribió
+   mientras tanto.
+
+Los puertos se cambian con `COPY_DB_PORT` y `COPY_API_PORT` (el script se niega
+a usar 5432 y 3000). Probar en la copia no reemplaza el backup verificado del
+mismo día antes del `migrate deploy` real (§5,
+`docs/design-liabilities.md` G.1).
+
 ---
 
 ## 5. Backups
