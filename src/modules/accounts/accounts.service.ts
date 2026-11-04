@@ -11,6 +11,11 @@ import {
 
 const ZERO = new Prisma.Decimal(0);
 
+export interface IAccountBalance {
+  account: Account;
+  currentBalance: Prisma.Decimal;
+}
+
 /** Suman al saldo de la cuenta. */
 const BALANCE_INCREASING_TYPES: TransactionType[] = [
   TransactionType.INCOME,
@@ -81,13 +86,18 @@ export class AccountsService {
     );
   }
 
-  /** Suma de `currentBalance` de todas las cuentas del usuario. */
-  async getTotalBalance(userId: string): Promise<Prisma.Decimal> {
-    const accounts = await this.prisma.account.findMany({ where: { userId } });
-    const balances = await Promise.all(
-      accounts.map((account) => this.computeCurrentBalance(account)),
+  /** Cada cuenta del usuario con su `currentBalance`, para quien necesite separarlas por tipo. */
+  async getBalances(userId: string): Promise<IAccountBalance[]> {
+    const accounts = await this.prisma.account.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return Promise.all(
+      accounts.map(async (account) => ({
+        account,
+        currentBalance: await this.computeCurrentBalance(account),
+      })),
     );
-    return balances.reduce((sum, balance) => sum.plus(balance), ZERO);
   }
 
   private async findOwned(id: string, userId: string): Promise<Account> {
