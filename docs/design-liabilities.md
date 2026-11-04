@@ -71,7 +71,7 @@ Todas las transacciones con categoría `DEBT` (3 filas, 1.660.925) son `EXPENSE`
 
 - **Lo que parece pago de tarjeta registrado como gasto:** con seguridad, el de 1.065.695 del 1/09. Los dos de 297.615 también son pagos de tarjeta (Davivienda), pero de un celular cuya compra nunca se registró: ahí el pago es el **único** momento en que ese gasto aparece, así que **no** hay doble conteo.
 - **Impacto hoy:** en el período 28 ago – 28 sep, el presupuesto `DEBT` (límite 297.615, viene del gasto fijo "Deuda celular") muestra 1.363.310 gastados (458 %), y el ledger de ese período cierra en −1.083.418.
-- **¿El 1.065.695 cuenta dos veces?** Solo si las compras que pagó (las del extracto con corte 31/08) también están registradas como gasto. La tarjeta no tiene movimientos antes del 1/09. En agosto hay 34 `EXPENSE` (1.486.491), todos con la cuenta Ahorros: si alguno fue en realidad una compra con la Visa, hay doble conteo parcial. Los datos no permiten saberlo (I.2).
+- **¿El 1.065.695 cuenta dos veces?** Solo si las compras que pagó (las del extracto con corte 31/08) también están registradas como gasto. La tarjeta no tiene movimientos antes del 1/09. En agosto hay 34 `EXPENSE` (1.486.491), todos con la cuenta Ahorros y todos del 28 en adelante: si alguno fue en realidad una compra con la Visa, hay doble conteo parcial. Los datos no permiten saberlo del todo; se cerró como **historia** (§1.5, I.2).
 - "Cuota de manejo" 14.900 (`OTHER`, gasto fijo "Cuota de Manejo Bancolombia Ahorros") es la cuota de la cuenta de ahorros, no de la tarjeta. La cuota de manejo de la Visa (30.900) no está registrada.
 
 ### 1.4 El abono de 838.675 del 04/10/2026 (caso de prueba)
@@ -80,9 +80,11 @@ Todas las transacciones con categoría `DEBT` (3 filas, 1.660.925) son `EXPENSE`
 
 Tampoco están las compras de octubre del extracto (2.314.058): la app solo tiene 104.900 con la tarjeta en ese ciclo (el gimnasio del 2/10).
 
-### 1.5 Observación aparte
+### 1.5 Observación aparte (corregida)
 
-El ledger del período "1 jul – 27 ago" muestra ingreso y gasto en 0, aunque tiene transacciones de agosto. Puede ser intencional (período previo al ancla), pero conviene confirmarlo antes de cualquier recálculo en cascada que empiece en esas fechas.
+La primera versión decía que el período "1 jul – 27 ago" tenía transacciones de agosto y aun así mostraba ingreso y gasto en 0. **Era un error:** las 37 transacciones de agosto son del 28 en adelante y caen en el período 28 ago – 28 sep. El período "1 jul – 27 ago" solo tiene el préstamo del 1 de julio (`LOAN_GIVEN`, que no es ingreso ni gasto), así que sus ceros son correctos. Además es el período de arranque, sin salario que lo abra, y por regla su ledger queda en 0. No hay nada que confirmar antes de un recálculo en cascada.
+
+**Nota sobre el pago de 1.065.695 del 1/09 (§1.3, B.6):** la app no tiene nada registrado antes del 28 de agosto, y la tarjeta no tiene movimientos antes del 1/09. Por eso ese pago es, probablemente, el **único registro de las compras de agosto con la Visa**: no hay doble conteo. **Se deja como historia** (B.6, opción 1) y la pregunta I.2 queda cerrada.
 
 ---
 
@@ -92,6 +94,7 @@ El ledger del período "1 jul – 27 ago" muestra ingreso y gasto en 0, aunque t
 | --- | --- |
 | TC VISA +1.007.408 | Era el **cupo disponible**, no la deuda. Ese número está desactualizado y **no se usa** |
 | Pagos de tarjeta hasta hoy | Registrados como `EXPENSE` (§1.3) |
+| Pago de 1.065.695 del 1/09 | Probablemente el único registro de las compras de agosto con la Visa: **se deja como historia** (§1.5, B.6) |
 | Metas | Están dentro de las cuentas: la corrección de C queda **confirmada** |
 | Cuotas | Se configuran al registrar la compra con tarjeta (D) |
 | Configuración de tarjeta | Cupo, corte, pago, cuota de manejo, tasa y similares (B.7) |
@@ -273,7 +276,7 @@ Afecta a **una fila** (1.065.695, 2026-09-01). Los 2 pagos de "Deuda celular" no
 | 2. Convertirlos a `TRANSFER` | Borrar el `EXPENSE` y crear `TRANSFER` Ahorros → TC VISA del 1/09 (desde la API, después del paso 2) | 28 ago – 28 sep: gasto 9.786.773, cierre −17.723, `DEBT` 297.615 (100 %). En cascada, el período actual abre 1.065.695 más arriba (cierre 5.167.948,90 → 6.233.643,90) y su base de presupuesto sube igual, así que los límites porcentuales actuales **suben** | Sin cambios: el 1/09 queda antes de ambas anclas (Ahorros 18/09, tarjeta 1/11) |
 | 3. Marcarlos | Etiqueta `pago-tarjeta` en `tags` (columna que ya existe, hoy vacía) | Sin cambios; la web puede mostrarlos apartados ("pago de tarjeta antiguo") | Sin cambios |
 
-**Recomendación: opción 1 + 3** (dejar la fila y marcarla). Es una sola fila. Probablemente pagó compras de agosto o anteriores que la app no tiene con la tarjeta, y en ese caso el gasto no está duplicado: ese pago es el único registro de esas compras. Convertirla haría perder ese gasto y movería los presupuestos del período actual.
+**Decidido: opción 1** (dejarla como historia, §1.5). Marcarla (opción 3) queda opcional para la fase 2. Es una sola fila. Probablemente pagó compras de agosto o anteriores que la app no tiene con la tarjeta, y en ese caso el gasto no está duplicado: ese pago es el único registro de esas compras. Convertirla haría perder ese gasto y movería los presupuestos del período actual.
 
 Solo si confirmas que las compras de la Visa de agosto **sí** están registradas (I.2), se convierte esa fila a mano por la API (opción 2). Es reversible con la operación inversa y no justifica una migración.
 
@@ -703,7 +706,7 @@ Cada paso se despliega solo y deja la app consistente. El paso 1 no depende de n
 | **El patrimonio baja de golpe** (metas, más −5.546.432 por la TC VISA) | Explicarlo en la UI y en las notas de despliegue |
 | **Doble resta en la base del presupuesto** si una deuda queda a la vez como gasto fijo y como plan (el caso "Deuda celular") | Al crear el plan, la web avisa si hay un gasto fijo `DEBT` con un monto parecido y ofrece desactivarlo |
 | **Cuotas que no se registran** (MVP manual) | La base del presupuesto ya las resta aunque no estén registradas; aparecen en pendientes hasta registrarlas |
-| **Convertir el pago del 1/09 cambia los presupuestos actuales** | Recomendación: no convertirlo (B.6) |
+| **Convertir el pago del 1/09 cambia los presupuestos actuales** | Decidido: no se convierte (B.6, §1.5) |
 | **Cambio en el cálculo de saldos** (`TRANSFER`, `FINANCED_PURCHASE`) | Test de que los saldos no cambian con datos sin esos tipos; ningún despliegue crea movimientos por sí solo |
 | **Enums de Postgres** | Solo valores decididos; `DEBIT_CARD` queda en el enum, rechazado en la API |
 | **App móvil** (en pausa) | No conoce los tipos nuevos ni los 409; aceptado y anotado en su repo |
@@ -717,7 +720,7 @@ Se cerraron: la #1 de la v1 (la TC VISA era el cupo disponible), la #2 (los pago
 | # | Pregunta | Recomendación por defecto |
 | --- | --- | --- |
 | 1 | ¿Anclo la TC VISA con el **pago total 4.539.024** (y no 4.539.023,98) al 31/10? | **Sí**: pagarlo deja la tarjeta en 0 |
-| 2 | ¿Las **compras con la Visa de agosto** están en la app (como gastos de Ahorros)? Decide si el pago de 1.065.695 del 1/09 contó doble | Si no sabes: **dejarlo como historia y marcarlo** (B.6) |
+| 2 | ~~¿Las **compras con la Visa de agosto** están en la app?~~ **Cerrada:** la app no tiene nada antes del 28/08; el pago de 1.065.695 del 1/09 es probablemente el único registro de esas compras y **se deja como historia** (§1.5, B.6) | — |
 | 3 | ¿Registro los **intereses (46.198,32) y la cuota de manejo (30.900) de octubre** como gastos del 31/10? | **Sí**: no cambian el saldo de la tarjeta y el gasto queda completo |
 | 4 | **Cuotas**: ¿gasto cuota a cuota o completo al comprar? (cambia la #6 de la v1) | **Cuota a cuota** para 2 o más cuotas (D.3) |
 | 5 | ¿Categoría de las **cuotas** reconocidas: `DEBT` o la de la compra? | **`DEBT`**, con la categoría original guardada en el plan |
