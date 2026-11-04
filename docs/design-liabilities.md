@@ -97,6 +97,7 @@ La primera versión decía que el período "1 jul – 27 ago" tenía transaccion
 | Pago de 1.065.695 del 1/09 | Probablemente el único registro de las compras de agosto con la Visa: **se deja como historia** (§1.5, B.6) |
 | Metas | Están dentro de las cuentas: la corrección de C queda **confirmada** |
 | Cuotas | Se configuran al registrar la compra con tarjeta (D) |
+| Cuotas (paso 5) | Gasto cuota a cuota en la **fecha de pago**, solo capital; tasa por plan; la cuota lleva la **categoría de la compra** (no `DEBT`); registro manual ("Registrar todas"); la ampliación de plazo de la VISA (1,9915 %) **cuenta como gasto** (`REFINANCE` con `recognizeInstallments`). Pasos reales: `docs/runbook-credit-cards.md` |
 | Configuración de tarjeta | Cupo, corte, pago, cuota de manejo, tasa y similares (B.7) |
 | Mis productos | Entidad + productos, con relaciones distintas por entidad (E) |
 
@@ -444,9 +445,10 @@ installmentNumber Int?     // null on the FINANCED_PURCHASE row
 - "Sin cuenta" ya es un estado válido (hay 2 hoy).
 - La fila queda **bloqueada** en `/transactions` (409, como los préstamos), así que nadie le puede poner una cuenta después.
 
-**Por qué categoría `DEBT`:**
-- El límite de `DEBT` pasa a ser Σ gastos fijos `DEBT` + Σ cuotas del período, sin mezclar cuotas con las reglas porcentuales de otras categorías.
-- La categoría original de la compra queda en el plan, para reportes de "en qué gasté" (I.5).
+**Categoría (decidido en el paso 5: la de la compra, no `DEBT`):**
+- Cada cuota reconocida lleva la categoría del plan (lo que se compró), así los reportes de "en qué gasté" quedan bien.
+- El límite de cada categoría suma sus cuotas del período, como un gasto fijo más; la base del presupuesto ya las restó, así que no se comen el porcentaje de la categoría.
+- Una ampliación de plazo que cuenta como gasto necesita su propia categoría (la de la VISA usa `DEBT`).
 
 ### D.4 Pendientes, "Fijos por registrar" y presupuesto
 
@@ -724,11 +726,11 @@ Se cerraron: la #1 de la v1 (la TC VISA era el cupo disponible), la #2 (los pago
 | 2 | ~~¿Las **compras con la Visa de agosto** están en la app?~~ **Cerrada:** la app no tiene nada antes del 28/08; el pago de 1.065.695 del 1/09 es probablemente el único registro de esas compras y **se deja como historia** (§1.5, B.6) | — |
 | 3 | ¿Registro los **intereses (46.198,32) y la cuota de manejo (30.900) de octubre** como gastos del 31/10? | **Sí**: no cambian el saldo de la tarjeta y el gasto queda completo |
 | 4 | **Cuotas**: ¿gasto cuota a cuota o completo al comprar? (cambia la #6 de la v1) | **Cuota a cuota** para 2 o más cuotas (D.3) |
-| 5 | ¿Categoría de las **cuotas** reconocidas: `DEBT` o la de la compra? | **`DEBT`**, con la categoría original guardada en el plan |
+| 5 | ~~¿Categoría de las **cuotas** reconocidas?~~ **Cerrada:** la de la compra | — |
 | 6 | ¿En qué fecha cuenta la cuota: **corte** o **fecha de pago**? | **Fecha de pago** (≈17): es cuando sale la plata |
 | 7 | ¿Las cuotas se registran **a mano** desde pendientes o **solas** al vencer? | **A mano** en el MVP ("Registrar todas"); automáticas en fase 2. El presupuesto las resta igual |
-| 8 | ¿Las cuotas de la **ampliación de plazo** cuentan como gasto? | **No**, como dijiste. Consecuencia: ese capital sale de Ahorros (con el `TRANSFER`) sin aparecer nunca en el ledger. Si prefieres verlo, es `recognizeInstallments = true` en ese plan |
-| 9 | ¿Qué **tasa** tiene la ampliación de plazo y cuándo empezó? | Necesito el dato del extracto; si no, la tarjeta por defecto (solo afecta la estimación) |
+| 8 | ~~¿Las cuotas de la **ampliación de plazo** cuentan como gasto?~~ **Cerrada:** sí, en la VISA (`recognizeInstallments = true`, categoría `DEBT`) | — |
+| 9 | ~~¿Qué **tasa** tiene la ampliación de plazo?~~ **Cerrada:** 1,9915 % mensual; va en la 7/12 al corte del 31/10 | — |
 | 10 | ¿Creo la **TC Davivienda** como producto, con el celular como plan `LEGACY`, y desactivo el gasto fijo "Deuda celular"? | **Sí**, en el paso 5. Necesito su cupo, su deuda al último corte, sus días de corte y pago, y el plan del celular (monto, cuotas, en cuál va) |
 | 11 | ¿Entidad como **tabla** o como texto en la cuenta? | **Tabla** mínima (E.1) |
 | 12 | ¿`DEBIT_CARD` deja de ser un tipo y pasa a "cuenta con tarjeta débito"? | **Sí**; Ahorros Bancolombia pasa a `SAVINGS_ACCOUNT` + `hasDebitCard` |
