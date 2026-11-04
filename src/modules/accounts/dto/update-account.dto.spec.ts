@@ -62,3 +62,51 @@ describe('UpdateAccountDto', () => {
     );
   });
 });
+
+describe('UpdateAccountDto — campos de tarjeta', () => {
+  it('acepta la configuración de la TC VISA', async () => {
+    const dto = await parseBody({
+      creditLimit: 4_300_000,
+      statementDay: 31,
+      paymentDueDay: 17,
+      defaultMonthlyRate: 2.1155,
+    });
+
+    expect(dto).toEqual({
+      creditLimit: 4_300_000,
+      statementDay: 31,
+      paymentDueDay: 17,
+      defaultMonthlyRate: 2.1155,
+    });
+  });
+
+  it('acepta null para borrarlos y una tasa de 0 %', async () => {
+    await expect(
+      parseBody({
+        creditLimit: null,
+        statementDay: null,
+        defaultMonthlyRate: 0,
+      }),
+    ).resolves.toEqual({
+      creditLimit: null,
+      statementDay: null,
+      defaultMonthlyRate: 0,
+    });
+  });
+
+  it.each([
+    { creditLimit: 0 },
+    { creditLimit: -1 },
+    { creditLimit: 100.123 },
+    { statementDay: 0 },
+    { statementDay: 32 },
+    { statementDay: 15.5 },
+    { paymentDueDay: 0 },
+    { paymentDueDay: 32 },
+    { defaultMonthlyRate: -0.1 },
+    { defaultMonthlyRate: 2.11555 },
+    { defaultMonthlyRate: 101 },
+  ])('rechaza %p', async (body) => {
+    await expect(parseBody(body)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});

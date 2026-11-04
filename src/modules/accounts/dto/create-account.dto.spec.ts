@@ -68,3 +68,30 @@ describe('CreateAccountDto', () => {
     },
   );
 });
+
+describe('CreateAccountDto — campos de tarjeta', () => {
+  const card = { name: 'TC Davivienda', type: 'CREDIT_CARD' };
+
+  it('acepta cupo, días y tasa', async () => {
+    await expect(
+      parseBody({
+        ...card,
+        creditLimit: 11_500_000,
+        statementDay: 29,
+        paymentDueDay: 15,
+        defaultMonthlyRate: 0,
+      }),
+    ).resolves.toMatchObject({ creditLimit: 11_500_000, statementDay: 29 });
+  });
+
+  it.each([
+    { creditLimit: 0 },
+    { statementDay: 32 },
+    { paymentDueDay: 0 },
+    { defaultMonthlyRate: -1 },
+  ])('rechaza %p', async (body) => {
+    await expect(parseBody({ ...card, ...body })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+});

@@ -9,7 +9,9 @@ import type { CurrentUserService } from '@common/services/current-user.service';
 import type { PrismaService } from '@modules/prisma/prisma.service';
 import {
   AccountsService,
+  CARD_FIELDS_ONLY_ON_CREDIT_CARD_MESSAGE,
   CARD_LAST4_WITHOUT_CARD_MESSAGE,
+  CONFIGURE_WITH_STATEMENT_MESSAGE,
   CREDIT_CARD_TYPE_CHANGE_MESSAGE,
   DEBIT_CARD_NOT_ALLOWED_MESSAGE,
 } from './accounts.service';
@@ -394,5 +396,162 @@ describe('AccountsService — editar un producto (PATCH /accounts/:id)', () => {
     await expect(
       service.update('acc', { hasDebitCard: false, cardLast4: null }),
     ).resolves.toMatchObject({ hasDebitCard: false, cardLast4: null });
+  });
+});
+
+describe('AccountsService — configurar una tarjeta de crédito', () => {
+  const card = (overrides: Partial<Account> = {}) =>
+    stored({ id: 'visa', type: AccountType.CREDIT_CARD, ...overrides });
+
+  it('una tarjeta nueva (sin saldo ni movimientos) se configura con PATCH', async () => {
+    const { service } = setup([
+      card({ initialBalance: new Prisma.Decimal(0) }),
+    ]);
+
+    const result = await service.update('visa', {
+      creditLimit: 11_500_000,
+      statementDay: 29,
+      paymentDueDay: 15,
+    });
+
+    expect(result.creditCard).toMatchObject({
+      configured: true,
+      creditLimit: 11_500_000,
+      statementDay: 29,
+      paymentDueDay: 15,
+      debt: 0,
+      available: 11_500_000,
+    });
+  });
+
+  it('también al crearla', async () => {
+    const { service } = setup();
+
+    const result = await service.create(
+      create({
+        type: AccountType.CREDIT_CARD,
+        creditLimit: 11_500_000,
+        defaultMonthlyRate: 2.1155,
+      }),
+    );
+
+    expect(result.creditCard).toMatchObject({
+      configured: true,
+      defaultMonthlyRate: 2.1155,
+    });
+  });
+
+  it('a una tarjeta con saldo no se le pone cupo a secas: va por statement-balance (400)', async () => {
+    // TC VISA today: its anchor is the available credit, not the debt.
+    const { service, prisma } = setup([
+      card({ initialBalance: new Prisma.Decimal(1_766_523) }),
+    ]);
+
+    await expect(
+      service.update('visa', { creditLimit: 4_300_000 }),
+    ).rejects.toThrow(CONFIGURE_WITH_STATEMENT_MESSAGE);
+    expect(prisma.account.update).not.toHaveBeenCalled();
+  });
+
+  it('ni a una con movimientos', async () => {
+    const { service } = setup([card()], { visa: 6 });
+
+    await expect(
+      service.update('visa', { creditLimit: 4_300_000 }),
+    ).rejects.toThrow(CONFIGURE_WITH_STATEMENT_MESSAGE);
+  });
+
+  it('una tarjeta ya configurada cambia su cupo, días y tasa aunque tenga movimientos', async () => {
+    const { service, prisma } = setup(
+      [
+        card({
+          initialBalance: new Prisma.Decimal(-4_539_024),
+          creditLimit: new Prisma.Decimal(4_300_000),
+        }),
+      ],
+      { visa: 6 },
+    );
+
+    const result = await service.update('visa', {
+      creditLimit: 5_000_000,
+      statementDay: 31,
+      paymentDueDay: 17,
+      defaultMonthlyRate: 2.1155,
+    });
+
+    expect(result.creditCard).toMatchObject({
+      creditLimit: 5_000_000,
+      debt: 4_539_024,
+      available: 460_976,
+      overLimit: 0,
+    });
+    expect(prisma.transaction.count).not.toHaveBeenCalled();
+  });
+
+  it('días y tasa sin cupo no configuran la tarjeta ni piden extracto', async () => {
+    const { service } = setup([
+      card({ initialBalance: new Prisma.Decimal(1_766_523) }),
+    ]);
+
+    const result = await service.update('visa', {
+      statementDay: 31,
+      paymentDueDay: 17,
+    });
+
+    expect(result.creditCard).toMatchObject({
+      configured: false,
+      statementDay: 31,
+      debt: null,
+    });
+  });
+
+  it('creditLimit = null deja la tarjeta sin configurar', async () => {
+    const { service } = setup([
+      card({ creditLimit: new Prisma.Decimal(4_300_000) }),
+    ]);
+
+    const result = await service.update('visa', { creditLimit: null });
+
+    expect(result.creditCard).toMatchObject({
+      configured: false,
+      creditLimit: null,
+    });
+  });
+
+  it.each([AccountType.SAVINGS_ACCOUNT, AccountType.CASH])(
+    'rechaza campos de tarjeta en %s (400)',
+    async (type) => {
+      const { service } = setup([stored({ id: 'acc', type })]);
+
+      await expect(service.update('acc', { statementDay: 31 })).rejects.toThrow(
+        CARD_FIELDS_ONLY_ON_CREDIT_CARD_MESSAGE,
+      );
+      await expect(
+        service.create(create({ type, creditLimit: 1_000_000 })),
+      ).rejects.toThrow(CARD_FIELDS_ONLY_ON_CREDIT_CARD_MESSAGE);
+    },
+  );
+
+  it('una tarjeta configurada que deja de serlo exige borrar sus campos', async () => {
+    const { service } = setup([
+      card({
+        creditLimit: new Prisma.Decimal(1_000_000),
+        statementDay: 29,
+      }),
+    ]);
+
+    await expect(
+      service.update('visa', { type: AccountType.SAVINGS_ACCOUNT }),
+    ).rejects.toThrow(CARD_FIELDS_ONLY_ON_CREDIT_CARD_MESSAGE);
+    await expect(
+      service.update('visa', {
+        type: AccountType.SAVINGS_ACCOUNT,
+        creditLimit: null,
+        statementDay: null,
+      }),
+    ).resolves.toMatchObject({
+      type: AccountType.SAVINGS_ACCOUNT,
+      creditCard: null,
+    });
   });
 });

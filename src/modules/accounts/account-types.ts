@@ -17,6 +17,10 @@ export const DEBIT_CARD_HOLDER_TYPES: AccountType[] = [
   AccountType.DEBIT_CARD,
 ];
 
+/** Topes de las columnas: Decimal(12,2) para el cupo y Decimal(7,4) para la tasa. */
+export const MAX_CREDIT_LIMIT = 9_999_999_999.99;
+export const MAX_MONTHLY_RATE = 100;
+
 export const CARD_LAST4_REGEX = /^\d{4}$/;
 export const CARD_LAST4_MESSAGE = 'cardLast4 must be exactly 4 digits';
 
