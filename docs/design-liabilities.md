@@ -252,7 +252,7 @@ Con el extracto de octubre ya están **todos**: cupo total 4.300.000 y deuda al 
 
 **Cómo validarlo:**
 
-- Script de solo lectura `prisma/verify-card-anchor.sql`, como el de préstamos. Por tarjeta:
+- Script de solo lectura `scripts/verify-card-anchor.sql`, como el de préstamos. Por tarjeta:
   - El ancla.
   - El saldo calculado **a una fecha** (debe dar −4.539.024 al 31/10 23:59).
   - Los movimientos anteriores al ancla, solo como conteo informativo.
