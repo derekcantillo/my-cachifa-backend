@@ -1,5 +1,5 @@
 export interface INetWorthAssets {
-  /** Suma de `currentBalance` de las cuentas que no son tarjeta de crédito. */
+  /** Saldo de las cuentas que no son tarjeta, más los saldos a favor de las tarjetas configuradas. */
   accountsBalance: number;
   /** Lo que falta por cobrar de los préstamos no pagados (`amount - amountRepaid`). */
   receivables: number;
@@ -10,7 +10,7 @@ export interface INetWorthAssets {
   goalsSavings: number;
   /**
    * @deprecated Ya no es un activo ni suma en el patrimonio: usar `info.creditCardsAvailable`.
-   * Se mantiene para la app móvil, que lo lee de aquí.
+   * Se mantiene en 0 para la app móvil, que lo lee de aquí.
    */
   creditCardsAvailable: number;
 }
@@ -18,7 +18,7 @@ export interface INetWorthAssets {
 export interface INetWorthLiabilities {
   /** Placeholder: deudas propias son un frente posterior. */
   debts: number;
-  /** Placeholder: tarjetas de crédito son un frente posterior. */
+  /** Suma de la deuda (`max(0, −saldo)`) de las tarjetas con cupo configurado. */
   creditCardsDebt: number;
 }
 
@@ -33,7 +33,7 @@ export interface INetWorthUnconfiguredCard {
 export interface INetWorthInfo {
   /** Suma de `Goal.currentAmount`: apartados dentro del saldo de las cuentas. */
   goalsSavings: number;
-  /** Cupo disponible de las tarjetas. Placeholder: tarjetas son un frente posterior. */
+  /** Cupo disponible de las tarjetas configuradas. No es un activo. */
   creditCardsAvailable: number;
   unconfiguredCards: INetWorthUnconfiguredCard[];
 }

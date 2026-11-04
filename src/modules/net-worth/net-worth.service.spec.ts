@@ -14,6 +14,7 @@ function balance(
   id: string,
   type: AccountType,
   currentBalance: number,
+  creditLimit: number | null = null,
 ): IAccountBalance {
   const account: Account = {
     id,
@@ -25,7 +26,7 @@ function balance(
     institutionId: null,
     hasDebitCard: false,
     cardLast4: null,
-    creditLimit: null,
+    creditLimit: creditLimit === null ? null : new Prisma.Decimal(creditLimit),
     statementDay: null,
     paymentDueDay: null,
     defaultMonthlyRate: null,
@@ -122,6 +123,62 @@ describe('NetWorthService', () => {
       { id: 'visa', name: 'Cuenta visa', currentBalance: 1_007_408 },
       { id: 'other_card', name: 'Cuenta other_card', currentBalance: -250_000 },
     ]);
+  });
+
+  it('counts the debt of configured cards as a liability; their available credit is only info', async () => {
+    const service = setup({
+      balances: [
+        balance('savings', AccountType.SAVINGS_ACCOUNT, 14_810_463.22),
+        balance('visa', AccountType.CREDIT_CARD, -4_539_024, 4_300_000),
+        balance('davivienda', AccountType.CREDIT_CARD, -4_670_990, 11_500_000),
+      ],
+    });
+
+    const result = await service.getNetWorth();
+
+    expect(result.liabilities.creditCardsDebt).toBe(9_210_014);
+    expect(result.totals).toEqual({
+      assets: 14_810_463.22,
+      liabilities: 9_210_014,
+    });
+    expect(result.netWorth).toBeCloseTo(14_810_463.22 - 9_210_014, 2);
+    // VISA is over its limit: 0 available, never negative.
+    expect(result.info.creditCardsAvailable).toBe(6_829_010);
+    expect(result.assets.creditCardsAvailable).toBe(0);
+    expect(result.info.unconfiguredCards).toEqual([]);
+  });
+
+  it('a credit balance on a configured card is an asset, not a negative debt', async () => {
+    const service = setup({
+      balances: [
+        balance('savings', AccountType.SAVINGS_ACCOUNT, 1_000_000),
+        balance('visa', AccountType.CREDIT_CARD, 50_000, 4_300_000),
+      ],
+    });
+
+    const result = await service.getNetWorth();
+
+    expect(result.assets.accountsBalance).toBe(1_050_000);
+    expect(result.liabilities.creditCardsDebt).toBe(0);
+    expect(result.info.creditCardsAvailable).toBe(4_300_000);
+    expect(result.netWorth).toBe(1_050_000);
+  });
+
+  it('only cards without a limit stay out of the totals as unconfigured', async () => {
+    const service = setup({
+      balances: [
+        balance('savings', AccountType.SAVINGS_ACCOUNT, 5_000_000),
+        balance('visa', AccountType.CREDIT_CARD, 1_007_408),
+        balance('davivienda', AccountType.CREDIT_CARD, -4_670_990, 11_500_000),
+      ],
+    });
+
+    const result = await service.getNetWorth();
+
+    expect(result.info.unconfiguredCards).toEqual([
+      { id: 'visa', name: 'Cuenta visa', currentBalance: 1_007_408 },
+    ]);
+    expect(result.netWorth).toBe(5_000_000 - 4_670_990);
   });
 
   it('keeps the deprecated asset fields for older clients, outside the totals', async () => {
