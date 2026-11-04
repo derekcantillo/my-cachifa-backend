@@ -1,4 +1,5 @@
 import { AccountType, Prisma, type Account } from '@prisma/client';
+import type { CardPlanRow } from '@modules/installment-plans/lib/installment-schedule';
 import { toAccountResponse } from '../interfaces/account-response.interface';
 import {
   creditCardFigures,
@@ -157,7 +158,10 @@ describe('bloque creditCard de IAccountResponse', () => {
     createdAt: NOW,
     updatedAt: NOW,
   };
-  const respond = (account: Account, balance: number) =>
+  const respond = (
+    account: Account & { installmentPlans?: CardPlanRow[] },
+    balance: number,
+  ) =>
     toAccountResponse({ ...account, institution: null }, decimal(balance), NOW);
 
   it('tarjeta configurada: deuda, disponible, sobrecupo, corte y pago', () => {
@@ -173,6 +177,45 @@ describe('bloque creditCard de IAccountResponse', () => {
       overLimit: 239_024,
       nextStatementDate: '2026-11-30',
       nextPaymentDate: '2026-11-17',
+      activePlans: 0,
+      remainingInstallmentPrincipal: 0,
+    });
+  });
+
+  it('cuenta los planes de cuotas activos y su capital por facturar (ya dentro de la deuda)', () => {
+    const plan = (overrides: Partial<CardPlanRow>): CardPlanRow => ({
+      principal: decimal(2_016_132.08),
+      installmentCount: 12,
+      monthlyRate: decimal(1.9915),
+      firstStatementDate: new Date('2026-04-30T00:00:00Z'),
+      billedBeforeTracking: 6,
+      recognizeInstallments: true,
+      status: 'ACTIVE',
+      settlementInstallment: null,
+      transactions: [],
+      ...overrides,
+    });
+    const card = {
+      ...base,
+      installmentPlans: [
+        // Ampliación: 7/12 billed, 5 × 168.011,01 (the last one 168.010,97) left.
+        plan({}),
+        // Purchase of 12/10: 1/36 billed.
+        plan({
+          principal: decimal(1_605_708),
+          installmentCount: 36,
+          monthlyRate: decimal(2.1155),
+          firstStatementDate: new Date('2026-10-31T00:00:00Z'),
+          billedBeforeTracking: 0,
+        }),
+        // Settled plans neither count nor add principal.
+        plan({ status: 'SETTLED', settlementInstallment: 7 }),
+      ],
+    };
+
+    expect(respond(card, -4_539_024).creditCard).toMatchObject({
+      activePlans: 2,
+      remainingInstallmentPrincipal: 840_055.01 + (1_605_708 - 44_603),
     });
   });
 
@@ -197,6 +240,8 @@ describe('bloque creditCard de IAccountResponse', () => {
       overLimit: null,
       nextStatementDate: null,
       nextPaymentDate: null,
+      activePlans: 0,
+      remainingInstallmentPrincipal: 0,
     });
   });
 

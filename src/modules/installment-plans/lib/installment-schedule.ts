@@ -301,3 +301,65 @@ export function installmentChargesInRange(
   }
   return total;
 }
+
+/** Lo mínimo de un plan para resumirlo en el bloque `creditCard` de la tarjeta. */
+export interface CardPlanRow {
+  principal: Prisma.Decimal;
+  installmentCount: number;
+  monthlyRate: Prisma.Decimal;
+  firstStatementDate: Date;
+  billedBeforeTracking: number;
+  recognizeInstallments: boolean;
+  status: 'ACTIVE' | 'SETTLED';
+  settlementInstallment: number | null;
+  transactions: { installmentNumber: number | null }[];
+}
+
+/**
+ * Planes activos de una tarjeta y su capital que falta por facturar (el
+ * banco ya lo cuenta dentro de la deuda). Sin días de corte y pago no hay
+ * calendario: cada plan no liquidado cuenta como activo con todo su capital.
+ */
+export function summarizeCardPlans(
+  plans: readonly CardPlanRow[],
+  cycle: CardCycle | null,
+  today: CalendarDate,
+): { activePlans: number; remainingPrincipal: Prisma.Decimal } {
+  let activePlans = 0;
+  let remainingPrincipal = ZERO;
+  for (const plan of plans) {
+    if (!cycle) {
+      if (plan.status === 'ACTIVE') {
+        activePlans += 1;
+        remainingPrincipal = remainingPrincipal.plus(plan.principal);
+      }
+      continue;
+    }
+    const view = describePlan(
+      {
+        principal: plan.principal,
+        installmentCount: plan.installmentCount,
+        monthlyRate: plan.monthlyRate,
+        firstStatementDate: fromDbDate(plan.firstStatementDate),
+      },
+      cycle,
+      plan,
+      plan.transactions.flatMap(({ installmentNumber }) =>
+        installmentNumber === null
+          ? []
+          : [
+              {
+                number: installmentNumber,
+                transactionId: '',
+                amount: ZERO,
+                transactionDate: new Date(0),
+              },
+            ],
+      ),
+      today,
+    );
+    if (view.status === 'ACTIVE') activePlans += 1;
+    remainingPrincipal = remainingPrincipal.plus(view.remainingPrincipal);
+  }
+  return { activePlans, remainingPrincipal };
+}

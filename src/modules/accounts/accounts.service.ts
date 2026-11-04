@@ -29,6 +29,9 @@ export const CARD_LAST4_WITHOUT_CARD_MESSAGE =
 export const CARD_FIELDS_ONLY_ON_CREDIT_CARD_MESSAGE =
   'creditLimit, statementDay, paymentDueDay and defaultMonthlyRate are only allowed on CREDIT_CARD accounts';
 
+export const CARD_HAS_PLANS_MESSAGE =
+  'This card has installment plans: it must stay a CREDIT_CARD with statementDay and paymentDueDay (they define its installment schedule)';
+
 export const CONFIGURE_WITH_STATEMENT_MESSAGE =
   'This card already has a balance or movements: set its credit limit with POST /accounts/:id/statement-balance, which also sets the debt';
 
@@ -162,6 +165,13 @@ export class AccountsService {
     if (existing.creditLimit === null && creditLimit) {
       await this.assertFirstLimitAllowed(existing);
     }
+    if (
+      dto.statementDay === null ||
+      dto.paymentDueDay === null ||
+      (dto.type !== undefined && dto.type !== AccountType.CREDIT_CARD)
+    ) {
+      await this.assertNoInstallmentPlans(existing);
+    }
     if (dto.institutionId) {
       await this.assertInstitutionOwned(dto.institutionId, userId);
     }
@@ -279,6 +289,16 @@ export class AccountsService {
     });
     if (!existing.initialBalance.isZero() || movements > 0) {
       throw new BadRequestException(CONFIGURE_WITH_STATEMENT_MESSAGE);
+    }
+  }
+
+  /** El calendario de cuotas sale del corte y el pago de la tarjeta. */
+  private async assertNoInstallmentPlans(existing: Account): Promise<void> {
+    const plans = await this.prisma.installmentPlan.count({
+      where: { accountId: existing.id },
+    });
+    if (plans > 0) {
+      throw new BadRequestException(CARD_HAS_PLANS_MESSAGE);
     }
   }
 

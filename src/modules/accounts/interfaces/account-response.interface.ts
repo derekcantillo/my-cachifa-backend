@@ -1,4 +1,9 @@
 import { AccountType, type Account, type Prisma } from '@prisma/client';
+import { toFinancialCalendarDate } from '@common/utils/period.util';
+import {
+  summarizeCardPlans,
+  type CardPlanRow,
+} from '@modules/installment-plans/lib/installment-schedule';
 import {
   creditCardFigures,
   effectiveAnnualRate,
@@ -7,14 +12,28 @@ import {
   nextStatementDate,
 } from '../lib/credit-card';
 
-/** Lo que cada consulta de `/accounts` trae de la entidad. */
+/** Lo que cada consulta de `/accounts` trae de la entidad y de los planes de cuotas. */
 export const ACCOUNT_INCLUDE = {
   institution: { select: { id: true, name: true } },
+  installmentPlans: {
+    select: {
+      principal: true,
+      installmentCount: true,
+      monthlyRate: true,
+      firstStatementDate: true,
+      billedBeforeTracking: true,
+      recognizeInstallments: true,
+      status: true,
+      settlementInstallment: true,
+      transactions: { select: { installmentNumber: true } },
+    },
+  },
 } satisfies Prisma.AccountInclude;
 
+/** `installmentPlans` es opcional: sin él, el bloque `creditCard` dice 0 planes. */
 export type AccountWithInstitution = Prisma.AccountGetPayload<{
-  include: typeof ACCOUNT_INCLUDE;
-}>;
+  include: { institution: typeof ACCOUNT_INCLUDE.institution };
+}> & { installmentPlans?: CardPlanRow[] };
 
 /** Lo que trae un `Transaction` al incluir su cuenta — sin `currentBalance`, que solo tiene sentido calculado una vez por cuenta, no repetido por cada movimiento. */
 export interface IAccountSummaryResponse {
@@ -62,6 +81,10 @@ export interface ICreditCardResponse {
   nextStatementDate: string | null;
   /** `YYYY-MM-DD` (Bogotá); `null` sin `statementDay` o `paymentDueDay`. */
   nextPaymentDate: string | null;
+  /** Planes de cuotas activos (ni terminados ni liquidados). */
+  activePlans: number;
+  /** Capital de cuotas que falta por facturar. Ya está dentro de `debt`, como en el extracto. */
+  remainingInstallmentPrincipal: number;
 }
 
 export function toAccountSummaryResponse(
@@ -77,12 +100,19 @@ export function toAccountSummaryResponse(
 }
 
 export function toCreditCardResponse(
-  account: Account,
+  account: Account & { installmentPlans?: CardPlanRow[] },
   currentBalance: Prisma.Decimal,
   now: Date,
 ): ICreditCardResponse {
   const { creditLimit, statementDay, paymentDueDay, defaultMonthlyRate } =
     account;
+  const plans = summarizeCardPlans(
+    account.installmentPlans ?? [],
+    statementDay === null || paymentDueDay === null
+      ? null
+      : { statementDay, paymentDueDay },
+    toFinancialCalendarDate(now),
+  );
   const figures = creditLimit
     ? creditCardFigures(currentBalance, creditLimit)
     : null;
@@ -106,6 +136,8 @@ export function toCreditCardResponse(
       statementDay === null || paymentDueDay === null
         ? null
         : formatCalendarDate(nextPaymentDate(statementDay, paymentDueDay, now)),
+    activePlans: plans.activePlans,
+    remainingInstallmentPrincipal: plans.remainingPrincipal.toNumber(),
   };
 }
 

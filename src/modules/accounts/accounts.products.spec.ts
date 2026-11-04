@@ -10,6 +10,7 @@ import type { PrismaService } from '@modules/prisma/prisma.service';
 import {
   AccountsService,
   CARD_FIELDS_ONLY_ON_CREDIT_CARD_MESSAGE,
+  CARD_HAS_PLANS_MESSAGE,
   CARD_LAST4_WITHOUT_CARD_MESSAGE,
   CONFIGURE_WITH_STATEMENT_MESSAGE,
   CREDIT_CARD_TYPE_CHANGE_MESSAGE,
@@ -67,6 +68,7 @@ function stored(overrides: Partial<Account> & Pick<Account, 'id'>): Account {
 function setup(
   accounts: Account[] = [],
   movements: Record<string, number> = {},
+  plansByAccount: Record<string, number> = {},
 ) {
   const rows = [...accounts];
   const withInstitution = (row: Account) => {
@@ -111,6 +113,11 @@ function setup(
           );
           return Promise.resolve(withInstitution(row));
         },
+      ),
+    },
+    installmentPlan: {
+      count: jest.fn(({ where }: { where: { accountId: string } }) =>
+        Promise.resolve(plansByAccount[where.accountId] ?? 0),
       ),
     },
     financialInstitution: {
@@ -552,6 +559,46 @@ describe('AccountsService — configurar una tarjeta de crédito', () => {
     ).resolves.toMatchObject({
       type: AccountType.SAVINGS_ACCOUNT,
       creditCard: null,
+    });
+  });
+});
+
+describe('AccountsService — tarjeta con planes de cuotas', () => {
+  const visa = () =>
+    stored({
+      id: 'visa',
+      type: AccountType.CREDIT_CARD,
+      creditLimit: new Prisma.Decimal(4_300_000),
+      statementDay: 31,
+      paymentDueDay: 17,
+    });
+
+  it.each([
+    [{ statementDay: null }],
+    [{ paymentDueDay: null }],
+    [
+      {
+        type: AccountType.SAVINGS_ACCOUNT,
+        creditLimit: null,
+        statementDay: null,
+        paymentDueDay: null,
+      },
+    ],
+  ])('no deja quitarle lo que define el calendario: %p (400)', async (dto) => {
+    const { service } = setup([visa()], {}, { visa: 2 });
+
+    await expect(service.update('visa', dto)).rejects.toThrow(
+      CARD_HAS_PLANS_MESSAGE,
+    );
+  });
+
+  it('cambiar los días sí se puede (el calendario se recalcula)', async () => {
+    const { service } = setup([visa()], {}, { visa: 2 });
+
+    await expect(
+      service.update('visa', { statementDay: 30, paymentDueDay: 15 }),
+    ).resolves.toMatchObject({
+      creditCard: { statementDay: 30, paymentDueDay: 15 },
     });
   });
 });
