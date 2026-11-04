@@ -142,37 +142,85 @@ model User {
 }
 
 model Account {
-  id                 String                @id @default(cuid())
-  userId             String                @map("user_id")
+  id                 String                     @id @default(cuid())
+  userId             String                     @map("user_id")
   name               String
   type               AccountType
   /**
    * Saldo del que parte `currentBalance`, para "ponerse al día" sin reconstruir el historial.
    */
-  initialBalance     Decimal               @default(0) @map("initial_balance") @db.Decimal(12, 2)
+  initialBalance     Decimal                    @default(0) @map("initial_balance") @db.Decimal(12, 2)
   /**
    * Desde cuándo aplica `initialBalance`; sin ella, `currentBalance` suma todo el historial.
    */
-  initialBalanceDate DateTime?             @map("initial_balance_date")
+  initialBalanceDate DateTime?                  @map("initial_balance_date")
   /// Entidad del producto ("Bancolombia"); `null` = sin entidad (efectivo).
-  institutionId      String?               @map("institution_id")
+  institutionId      String?                    @map("institution_id")
   /// La cuenta tiene tarjeta débito. Es solo un medio de pago: no cambia ningún cálculo.
-  hasDebitCard       Boolean               @default(false) @map("has_debit_card")
+  hasDebitCard       Boolean                    @default(false) @map("has_debit_card")
   /// Últimos 4 dígitos de la tarjeta (débito de la cuenta, o la tarjeta de crédito).
-  cardLast4          String?               @map("card_last4") @db.VarChar(4)
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
-  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardLast4          String?                    @map("card_last4") @db.VarChar(4)
+  /// Cupo total de una `CREDIT_CARD`. Con cupo, la tarjeta está "configurada": su saldo
+  /// es −deuda y entra al patrimonio como pasivo. Sin cupo queda fuera de los totales.
+  creditLimit        Decimal?                   @map("credit_limit") @db.Decimal(12, 2)
+  /// Día de corte (1-31; 31 = último día del mes, se ajusta a meses cortos).
+  statementDay       Int?                       @map("statement_day")
+  /// Día de pago (1-31) del mes siguiente al corte.
+  paymentDueDay      Int?                       @map("payment_due_day")
+  /// Tasa mensual por defecto, en % (2.1155 = 2,1155 % mensual). Solo para estimar.
+  defaultMonthlyRate Decimal?                   @map("default_monthly_rate") @db.Decimal(7, 4)
+  createdAt          DateTime                   @default(now()) @map("created_at")
+  updatedAt          DateTime                   @updatedAt @map("updated_at")
+  user               User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// `Restrict`: una entidad con productos no se borra (la API responde 400 antes).
-  institution        FinancialInstitution? @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  institution        FinancialInstitution?      @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   transactions       Transaction[]
   /// Transferencias (`TRANSFER`) que llegan a esta cuenta.
-  incomingTransfers  Transaction[]         @relation("TransferDestination")
+  incomingTransfers  Transaction[]              @relation("TransferDestination")
   loans              Loan[]
+  balanceAdjustments AccountBalanceAdjustment[]
 
   @@index([userId])
   @@index([institutionId])
   @@map("accounts")
+}
+
+enum BalanceAdjustmentReason {
+  /// `POST /accounts/:id/statement-balance`: extracto de tarjeta o saldo del banco.
+  STATEMENT
+  /// `PATCH /accounts/:id/initial-balance`.
+  INITIAL_BALANCE
+  /// Deshace otro ajuste (`revertsId`).
+  REVERT
+}
+
+/// Historial del ancla (`initialBalance` + `initialBalanceDate`) de una cuenta, con los
+/// valores anteriores para poder revertir. Nunca toca transacciones.
+model AccountBalanceAdjustment {
+  id             String                    @id @default(cuid())
+  accountId      String                    @map("account_id")
+  reason         BalanceAdjustmentReason
+  oldAmount      Decimal                   @map("old_amount") @db.Decimal(12, 2)
+  oldDate        DateTime?                 @map("old_date")
+  newAmount      Decimal                   @map("new_amount") @db.Decimal(12, 2)
+  newDate        DateTime?                 @map("new_date")
+  /// Cupo antes y después; iguales si el ajuste no lo cambió.
+  oldCreditLimit Decimal?                  @map("old_credit_limit") @db.Decimal(12, 2)
+  newCreditLimit Decimal?                  @map("new_credit_limit") @db.Decimal(12, 2)
+  /// Fecha del extracto o del saldo del banco (día de Bogotá), solo en `STATEMENT`.
+  statementDate  DateTime?                 @map("statement_date") @db.Date
+  /// `currentBalance` justo antes y justo después del ajuste (foto de ese momento).
+  balanceBefore  Decimal                   @map("balance_before") @db.Decimal(12, 2)
+  balanceAfter   Decimal                   @map("balance_after") @db.Decimal(12, 2)
+  /// En un `REVERT`, el ajuste que deshace.
+  revertsId      String?                   @unique @map("reverts_id")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  account        Account                   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  reverts        AccountBalanceAdjustment? @relation("AdjustmentRevert", fields: [revertsId], references: [id], onDelete: SetNull)
+  revertedBy     AccountBalanceAdjustment? @relation("AdjustmentRevert")
+
+  @@index([accountId, createdAt])
+  @@map("account_balance_adjustments")
 }
 
 /// Banco o billetera que agrupa productos (`Account`) en "Mis productos".

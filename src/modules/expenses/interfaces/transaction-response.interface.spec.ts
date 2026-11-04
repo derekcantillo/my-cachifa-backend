@@ -23,6 +23,10 @@ function account(id: string, name: string, type: AccountType): Account {
     institutionId: null,
     hasDebitCard: false,
     cardLast4: null,
+    creditLimit: null,
+    statementDay: null,
+    paymentDueDay: null,
+    defaultMonthlyRate: null,
     createdAt: DATE,
     updatedAt: DATE,
   };

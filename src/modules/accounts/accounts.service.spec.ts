@@ -42,6 +42,10 @@ function account(
     institutionId: null,
     hasDebitCard: false,
     cardLast4: null,
+    creditLimit: null,
+    statementDay: null,
+    paymentDueDay: null,
+    defaultMonthlyRate: null,
     createdAt: ANCHOR,
     updatedAt: ANCHOR,
   };
