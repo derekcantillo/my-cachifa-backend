@@ -1,4 +1,11 @@
-import type { Account, AccountType, Prisma } from '@prisma/client';
+import { AccountType, type Account, type Prisma } from '@prisma/client';
+import {
+  creditCardFigures,
+  effectiveAnnualRate,
+  formatCalendarDate,
+  nextPaymentDate,
+  nextStatementDate,
+} from '../lib/credit-card';
 
 /** Lo que cada consulta de `/accounts` trae de la entidad. */
 export const ACCOUNT_INCLUDE = {
@@ -27,6 +34,34 @@ export interface IAccountResponse extends IAccountSummaryResponse {
   institution: { id: string; name: string } | null;
   hasDebitCard: boolean;
   cardLast4: string | null;
+  /** Solo en `CREDIT_CARD`; `null` en las demás cuentas. */
+  creditCard: ICreditCardResponse | null;
+}
+
+/**
+ * Estado de una tarjeta. Sin cupo (`configured: false`) su saldo no tiene un
+ * signo confiable, así que deuda, disponible y sobrecupo van en `null`.
+ */
+export interface ICreditCardResponse {
+  /** `creditLimit != null`. */
+  configured: boolean;
+  creditLimit: number | null;
+  statementDay: number | null;
+  paymentDueDay: number | null;
+  /** % mensual. */
+  defaultMonthlyRate: number | null;
+  /** % efectivo anual, calculado de la tasa mensual. */
+  defaultEffectiveAnnualRate: number | null;
+  /** `max(0, −currentBalance)`. */
+  debt: number | null;
+  /** `max(0, creditLimit − debt)`: nunca negativo. */
+  available: number | null;
+  /** `max(0, debt − creditLimit)`: sobrecupo. */
+  overLimit: number | null;
+  /** `YYYY-MM-DD` (Bogotá); `null` sin `statementDay`. */
+  nextStatementDate: string | null;
+  /** `YYYY-MM-DD` (Bogotá); `null` sin `statementDay` o `paymentDueDay`. */
+  nextPaymentDate: string | null;
 }
 
 export function toAccountSummaryResponse(
@@ -41,9 +76,43 @@ export function toAccountSummaryResponse(
   };
 }
 
+export function toCreditCardResponse(
+  account: Account,
+  currentBalance: Prisma.Decimal,
+  now: Date,
+): ICreditCardResponse {
+  const { creditLimit, statementDay, paymentDueDay, defaultMonthlyRate } =
+    account;
+  const figures = creditLimit
+    ? creditCardFigures(currentBalance, creditLimit)
+    : null;
+  return {
+    configured: creditLimit !== null,
+    creditLimit: creditLimit?.toNumber() ?? null,
+    statementDay,
+    paymentDueDay,
+    defaultMonthlyRate: defaultMonthlyRate?.toNumber() ?? null,
+    defaultEffectiveAnnualRate: defaultMonthlyRate
+      ? effectiveAnnualRate(defaultMonthlyRate)
+      : null,
+    debt: figures?.debt.toNumber() ?? null,
+    available: figures?.available.toNumber() ?? null,
+    overLimit: figures?.overLimit.toNumber() ?? null,
+    nextStatementDate:
+      statementDay === null
+        ? null
+        : formatCalendarDate(nextStatementDate(statementDay, now)),
+    nextPaymentDate:
+      statementDay === null || paymentDueDay === null
+        ? null
+        : formatCalendarDate(nextPaymentDate(statementDay, paymentDueDay, now)),
+  };
+}
+
 export function toAccountResponse(
   account: AccountWithInstitution,
   currentBalance: Prisma.Decimal,
+  now: Date = new Date(),
 ): IAccountResponse {
   return {
     ...toAccountSummaryResponse(account),
@@ -55,5 +124,9 @@ export function toAccountResponse(
     institution: account.institution,
     hasDebitCard: account.hasDebitCard,
     cardLast4: account.cardLast4,
+    creditCard:
+      account.type === AccountType.CREDIT_CARD
+        ? toCreditCardResponse(account, currentBalance, now)
+        : null,
   };
 }
