@@ -21,6 +21,8 @@
 #   scripts/test-migration-on-copy.sh -- sh -c 'curl -s -H "X-API-Key: $COPY_API_KEY" "$COPY_API_URL/accounts"'
 #
 # Uses docker-compose.prod.yml by default; COMPOSE_FILE points it at another project.
+# Compose names the project after the folder: from another checkout (a git worktree
+# of an older commit, to compare before/after) set COMPOSE_PROJECT_NAME=my-cachifa-backend.
 set -euo pipefail
 
 COPY_CONTAINER=cachifa_migration_copy

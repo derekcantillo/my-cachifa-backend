@@ -228,7 +228,10 @@ scripts/test-migration-on-copy.sh --no-api -- true  # solo la migración, sin le
    mientras tanto.
 
 Los puertos se cambian con `COPY_DB_PORT` y `COPY_API_PORT` (el script se niega
-a usar 5432 y 3000). Probar en la copia no reemplaza el backup verificado del
+a usar 5432 y 3000). Para comparar con el código anterior, córrelo desde un
+`git worktree` del commit viejo (con `node_modules` y `.env` enlazados) y
+`COMPOSE_PROJECT_NAME=my-cachifa-backend`: Compose nombra el proyecto por la
+carpeta. Probar en la copia no reemplaza el backup verificado del
 mismo día antes del `migrate deploy` real (§5,
 `docs/design-liabilities.md` G.1).
 
