@@ -22,12 +22,16 @@ const BALANCE_INCREASING_TYPES: TransactionType[] = [
   TransactionType.LOAN_REPAYMENT,
 ];
 
-/** Restan del saldo de la cuenta — el ahorro también, porque sale de aquí hacia la meta. */
+/**
+ * Restan del saldo de la cuenta (`accountId`) — el ahorro también, porque sale
+ * de aquí hacia la meta, y una `TRANSFER` desde su origen.
+ */
 const BALANCE_DECREASING_TYPES: TransactionType[] = [
   TransactionType.EXPENSE,
   TransactionType.SAVING,
   TransactionType.DEBT_PAYMENT,
   TransactionType.LOAN_GIVEN,
+  TransactionType.TRANSFER,
 ];
 
 @Injectable()
@@ -116,6 +120,8 @@ export class AccountsService {
    * `initialBalance` más lo que sumen o resten las `Transaction`s de esta
    * cuenta desde `initialBalanceDate` en adelante — sin esa fecha, se cuenta
    * todo el historial, que es como se comportaba antes de que existiera.
+   * Una `TRANSFER` resta en su origen y suma en su destino (`toAccountId`):
+   * pagar una tarjeta sube su saldo hacia 0.
    */
   private async computeCurrentBalance(
     account: Account,
@@ -124,11 +130,19 @@ export class AccountsService {
       ? { transactionDate: { gte: account.initialBalanceDate } }
       : {};
 
-    const [increases, decreases] = await Promise.all([
+    const [increases, incomingTransfers, decreases] = await Promise.all([
       this.prisma.transaction.aggregate({
         where: {
           accountId: account.id,
           type: { in: BALANCE_INCREASING_TYPES },
+          ...dateFilter,
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.transaction.aggregate({
+        where: {
+          toAccountId: account.id,
+          type: TransactionType.TRANSFER,
           ...dateFilter,
         },
         _sum: { amount: true },
@@ -143,7 +157,9 @@ export class AccountsService {
       }),
     ]);
 
-    const increaseTotal = increases._sum.amount ?? ZERO;
+    const increaseTotal = (increases._sum.amount ?? ZERO).plus(
+      incomingTransfers._sum.amount ?? ZERO,
+    );
     const decreaseTotal = decreases._sum.amount ?? ZERO;
 
     return account.initialBalance.plus(increaseTotal).minus(decreaseTotal);
