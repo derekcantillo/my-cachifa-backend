@@ -63,11 +63,11 @@ export function startOfNextFinancialDay(date: CalendarDate): Date {
   );
 }
 
-const compareDates = (a: CalendarDate, b: CalendarDate) =>
+export const compareDates = (a: CalendarDate, b: CalendarDate) =>
   a.year - b.year || a.month - b.month || a.day - b.day;
 
 /** Mes siguiente (o anterior, con `delta` negativo). */
-function shiftMonth(
+export function shiftMonth(
   year: number,
   month: number,
   delta: number,
@@ -77,8 +77,23 @@ function shiftMonth(
 }
 
 /** El día `day` del mes, o el último si el mes es más corto (31 → 30 nov, 28 feb). */
-function clampedDay(year: number, month: number, day: number): CalendarDate {
+export function clampedDay(
+  year: number,
+  month: number,
+  day: number,
+): CalendarDate {
   return { year, month, day: Math.min(day, daysInMonth(year, month)) };
+}
+
+/** Primer corte en `day` o después (ese mismo día incluido). */
+export function statementOnOrAfter(
+  statementDay: number,
+  day: CalendarDate,
+): CalendarDate {
+  const thisMonth = clampedDay(day.year, day.month, statementDay);
+  if (compareDates(thisMonth, day) >= 0) return thisMonth;
+  const next = shiftMonth(day.year, day.month, 1);
+  return clampedDay(next.year, next.month, statementDay);
 }
 
 /** Próximo corte desde `now` (hoy incluido: lo de hoy entra en ese extracto). */
@@ -86,11 +101,7 @@ export function nextStatementDate(
   statementDay: number,
   now: Date,
 ): CalendarDate {
-  const today = toFinancialCalendarDate(now);
-  const thisMonth = clampedDay(today.year, today.month, statementDay);
-  if (compareDates(thisMonth, today) >= 0) return thisMonth;
-  const next = shiftMonth(today.year, today.month, 1);
-  return clampedDay(next.year, next.month, statementDay);
+  return statementOnOrAfter(statementDay, toFinancialCalendarDate(now));
 }
 
 /**
