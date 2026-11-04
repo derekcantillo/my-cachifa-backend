@@ -16,6 +16,7 @@ import { BudgetsModule } from '@modules/budgets/budgets.module';
 import { ExpensesModule } from '@modules/expenses/expenses.module';
 import { GoalsModule } from '@modules/goals/goals.module';
 import { HealthModule } from '@modules/health/health.module';
+import { InstallmentPlansModule } from '@modules/installment-plans/installment-plans.module';
 import { InstitutionsModule } from '@modules/institutions/institutions.module';
 import { LoansModule } from '@modules/loans/loans.module';
 import { FinancialPeriodsModule } from '@modules/financial-periods/financial-periods.module';
@@ -71,6 +72,7 @@ import { WhatsAppModule } from '@modules/whatsapp/whatsapp.module';
     ExpensesModule,
     GoalsModule,
     HealthModule,
+    InstallmentPlansModule,
     InstitutionsModule,
     LoansModule,
     FinancialPeriodsModule,
