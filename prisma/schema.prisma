@@ -63,6 +63,10 @@ enum TransactionType {
   DEBT_PAYMENT
   LOAN_GIVEN
   LOAN_REPAYMENT
+  /// Entre dos cuentas propias (`accountId` → `toAccountId`): pago de tarjeta,
+  /// avance o mover plata. No es gasto ni ingreso: fuera de ledger,
+  /// presupuestos y reportes.
+  TRANSFER
 }
 
 enum LoanStatus {
@@ -148,6 +152,8 @@ model Account {
   updatedAt          DateTime      @updatedAt @map("updated_at")
   user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions       Transaction[]
+  /// Transferencias (`TRANSFER`) que llegan a esta cuenta.
+  incomingTransfers  Transaction[] @relation("TransferDestination")
   loans              Loan[]
 
   @@index([userId])
@@ -160,6 +166,11 @@ model Transaction {
   accountId          String?           @map("account_id")
   recurringExpenseId String?           @map("recurring_expense_id")
   loanId             String?           @map("loan_id")
+  /**
+   * Cuenta destino de una `TRANSFER` (`accountId` es el origen). Nulo en
+   * cualquier otro tipo.
+   */
+  toAccountId        String?           @map("to_account_id")
   /**
    * Abono del que nace esta transacción `LOAN_REPAYMENT`. Borrar el abono la
    * borra (cascade); así deshacer un abono no deja el movimiento huérfano.
@@ -196,6 +207,7 @@ model Transaction {
   updatedAt          DateTime          @updatedAt @map("updated_at")
   user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   account            Account?          @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  toAccount          Account?          @relation("TransferDestination", fields: [toAccountId], references: [id], onDelete: SetNull)
   recurringExpense   RecurringExpense? @relation(fields: [recurringExpenseId], references: [id], onDelete: SetNull)
   // Un préstamo eliminable (sin repagos) se lleva su Transaction vinculada consigo.
   loan               Loan?             @relation(fields: [loanId], references: [id], onDelete: Cascade)
@@ -204,6 +216,7 @@ model Transaction {
 
   @@index([userId, periodId])
   @@index([accountId])
+  @@index([toAccountId])
   @@index([recurringExpenseId])
   @@index([loanId])
   @@map("transactions")
