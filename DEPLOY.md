@@ -148,8 +148,11 @@ docker compose -f docker-compose.prod.yml exec app pnpm prisma migrate status
 > cosa, **sáltate este paso.**
 
 ```bash
-docker compose -f docker-compose.prod.yml exec app pnpm prisma db seed
+docker compose -f docker-compose.prod.yml exec -e ALLOW_MIGRATE_REAL_DB=1 app pnpm prisma db seed
 ```
+
+`prisma/seed.ts` se niega a correr contra la base real sin `ALLOW_MIGRATE_REAL_DB=1`
+(§4.1): ponerlo es la confirmación de que la base está vacía.
 
 ### 3.5 Verificar
 
@@ -198,7 +201,20 @@ En este laptop **no hay base de desarrollo**: el Postgres de `127.0.0.1:5432`
 (y `DATABASE_URL_LOCAL`, y el `docker-compose.yml` de desarrollo, que usa el
 mismo contenedor y el mismo volumen) es **producción**. Nunca corras
 `pnpm prisma:migrate` (es `migrate dev`, que puede borrar datos) contra ella
-desde el host. Para probar una migración nueva:
+desde el host.
+
+**Seguro:** desde el host, todo comando de Prisma que escribe en la base
+(`migrate dev|deploy|reset|resolve`, `db push|execute|seed`, `pnpm prisma:migrate`,
+`pnpm prisma:seed`) se niega a correr si `DATABASE_URL` o `DATABASE_URL_LOCAL`
+apuntan a la base real (`localhost`/`127.0.0.1:5432`, o `cachifa_db`/`postgres`),
+y dice qué usar en su lugar. Lo hace `prisma.config.ts` (lo carga el CLI de Prisma
+en cada comando; también carga el `.env`, porque con ese archivo el CLI ya no lo
+lee solo) con `prisma/real-db-guard.ts`. Solo se salta con `ALLOW_MIGRATE_REAL_DB=1`.
+La imagen de producción no copia `prisma.config.ts`, así que el `migrate deploy`
+dentro del contenedor `app` (§3.3, §4) no cambia; el seed sí pide el permiso
+(§3.4). `pnpm exec prisma migrate status` y `diff` solo leen y no se bloquean.
+
+Para probar una migración nueva:
 
 ```bash
 scripts/test-migration-on-copy.sh                 # deja la copia arriba hasta que pulses Enter

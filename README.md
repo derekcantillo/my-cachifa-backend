@@ -21,6 +21,11 @@ pnpm prisma:migrate           # usa DATABASE_URL_LOCAL
 pnpm start:dev                # http://localhost:3000/api/v1
 ```
 
+> En el laptop de Derek no hay base de desarrollo: `localhost:5432` es producción, y
+> `pnpm prisma:migrate`, `pnpm prisma:seed` y los `prisma migrate|db …` que escriben
+> se niegan a correr contra ella (salvo `ALLOW_MIGRATE_REAL_DB=1`). Para probar una
+> migración: `scripts/test-migration-on-copy.sh` (`DEPLOY.md` §4.1).
+
 `DATABASE_URL` apunta al contenedor (`postgres`), no a `localhost`. Para correr `pnpm start:dev` desde el host, ese valor tiene que usar `localhost:5432`; otra opción es levantar todo con `docker compose up app`. Las variables de WhatsApp son obligatorias para arrancar aunque el canal esté en pausa (sirven valores de relleno). `pnpm prisma:seed` carga datos de ejemplo.
 
 ## Scripts
@@ -32,7 +37,7 @@ pnpm start:dev                # http://localhost:3000/api/v1
 | `pnpm lint` | ESLint **con `--fix`** (modifica archivos) |
 | `pnpm test` / `pnpm test:cov` | Tests unitarios (`src/**/*.spec.ts`) / con cobertura |
 | `pnpm test:e2e` | Tests e2e (`test/`) |
-| `pnpm prisma:migrate` / `pnpm prisma:seed` | Migraciones / seed contra la base local |
+| `pnpm prisma:migrate` / `pnpm prisma:seed` | Migraciones / seed contra una base local que **no** sea la real (se niegan si apuntan a ella) |
 | `npx tsc --noEmit` | Revisión de tipos sin compilar |
 
 ## Módulos (`src/modules`)

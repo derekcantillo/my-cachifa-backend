@@ -9,10 +9,15 @@ import {
   formatPeriodLabel,
   startOfFinancialDay,
 } from '../src/common/utils/period.util';
+import { assertSafePrismaCommand } from './real-db-guard';
 
 if (process.env['DATABASE_URL_LOCAL']) {
   process.env['DATABASE_URL'] = process.env['DATABASE_URL_LOCAL'];
 }
+
+// The seed rewrites budgets, accounts and goals: never on the real database
+// unless ALLOW_MIGRATE_REAL_DB=1 (a brand-new one, DEPLOY.md §3.4).
+assertSafePrismaCommand(['db', 'seed'], process.env);
 
 const prisma = new PrismaClient();
 
