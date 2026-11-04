@@ -362,13 +362,16 @@ docker compose -f docker-compose.prod.yml exec backup cachifa-backup run
 ### 5.5 Probar que se puede restaurar
 
 ```bash
-scripts/restore-test.sh            # último dump local
-scripts/restore-test.sh --remote   # último dump de daily/ en el remoto (prueba también el descifrado)
+scripts/restore-test.sh                      # último dump local
+scripts/restore-test.sh --remote             # último dump de daily/ en el remoto (prueba también el descifrado)
+scripts/restore-test.sh --file <ruta.sql.gz> # un archivo de este equipo (lo usa scripts/backup-now.sh, §5.7)
+scripts/restore-test.sh ... --compare        # además compara las filas con cachifa_db (solo lectura)
 ```
 
 Restaura en una base de descarte `cachifa_restore_test` del mismo Postgres,
 muestra cuántas filas tienen las tablas clave, falla si falta alguna tabla y
-borra la base al terminar. **No toca `cachifa_db`.** Conviene correrlo una vez
+borra la base al terminar. Se niega a restaurar un dump que cambie de base
+(`\connect` o `CREATE DATABASE`, como los de `pg_dump -C`). **No toca `cachifa_db`.** Conviene correrlo una vez
 al mes y después de cambiar la config de rclone.
 
 > Un backup que nunca se restauró es una suposición, no un respaldo.
@@ -400,9 +403,41 @@ docker compose -f docker-compose.prod.yml start app
 `psql` dentro de `backup` ya apunta a `cachifa_db` con las credenciales del
 `.env` (`PGHOST`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`).
 
-### 5.7 Dump manual (sin el servicio)
+### 5.7 Backup puntual verificado (sin el servicio, sin rclone)
 
-Si el servicio `backup` no está disponible:
+Mientras el servicio `backup` no esté listo (falta `rclone.conf`), este es el
+**paso previo obligatorio** antes de una migración o una corrección de datos
+(`docs/design-liabilities.md` G.1), el mismo día:
+
+```bash
+scripts/backup-now.sh
+```
+
+1. Hace `pg_dump` de producción en sesión de **solo lectura**
+   (`default_transaction_read_only=on`) hacia
+   `~/cachifa-backups/cachifa-AAAAMMDD-HHMM.sql.gz`, con permisos `600` (la
+   carpeta queda en `700`). Mismas opciones que el servicio: `--clean --if-exists`.
+2. Lo verifica: `gzip -t`, tamaño mayor que 0 y la marca de fin de `pg_dump`.
+3. Corre `scripts/restore-test.sh --file <dump> --compare`: lo restaura en la
+   base de descarte `cachifa_restore_test`, cuenta las filas de las tablas
+   clave, las compara con `cachifa_db` (en solo lectura) y borra la base de
+   descarte. Si las cuentas no coinciden, falla (si la app escribió entre el
+   volcado y la comparación, basta con correrlo otra vez).
+4. Imprime ruta, tamaño y `sha256`.
+
+**Nunca escribe en `cachifa_db`.** Pero el archivo queda en el mismo disco que la
+base: **cópialo fuera del laptop** (Drive, USB…) antes de seguir. Un dump que
+vive junto a la base **no es un backup**. `BACKUP_NOW_DIR` cambia la carpeta.
+
+Para restaurarlo de verdad, como en §5.6 pero desde el archivo:
+
+```bash
+gunzip -c ~/cachifa-backups/cachifa-AAAAMMDD-HHMM.sql.gz \
+  | docker compose -f docker-compose.prod.yml exec -T postgres \
+    psql -U postgres -d cachifa_db -v ON_ERROR_STOP=1 -q >/dev/null
+```
+
+Dump a mano, sin ninguna verificación (último recurso):
 
 ```bash
 docker compose -f docker-compose.prod.yml exec -T postgres \
@@ -410,8 +445,7 @@ docker compose -f docker-compose.prod.yml exec -T postgres \
   | gzip > ~/backups/cachifa-$(date +%Y%m%d-%H%M).sql.gz
 ```
 
-`exec -T` evita que Docker asigne un TTY y corrompa el archivo. Un dump que se
-queda en el mismo disco que la base **no es un backup**: súbelo a otro lado.
+`exec -T` evita que Docker asigne un TTY y corrompa el archivo.
 
 ---
 

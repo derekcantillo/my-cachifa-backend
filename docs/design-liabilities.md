@@ -648,9 +648,10 @@ Antes de cada `prisma migrate deploy` en producción, y antes de cada correcció
 
 1. `docker compose -f docker-compose.prod.yml exec backup cachifa-backup run`, y `status` en `ok`.
 2. `scripts/restore-test.sh --remote` en verde.
+   - Mientras el servicio no tenga rclone, en lugar de 1 y 2: `scripts/backup-now.sh` en verde y el archivo copiado fuera del laptop (`DEPLOY.md` §5.7).
 3. `prisma migrate status` muestra solo las migraciones esperadas como pendientes.
 
-**Hoy esto bloquea todo:** el servicio de backup no está configurado y el último dump es del **2026-09-18**.
+**Hoy:** el servicio de backup no tiene rclone y el último dump del servicio es del **2026-09-18**; el camino disponible es `scripts/backup-now.sh`.
 
 Además:
 - Toda migración es **aditiva**: tablas, columnas nulas o con default, valores de enum nuevos. El código anterior sigue funcionando con la base migrada.
